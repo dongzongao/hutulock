@@ -11,7 +11,7 @@ import com.hutulock.model.znode.ZNodePath;
 /**
  * Watcher 事件（不可变值对象）
  *
- * <p>对标 ZooKeeper 的 WatchedEvent，服务端推送给注册了 Watcher 的客户端。
+ * <p>服务端推送给注册了 Watcher 的客户端。
  *
  * <p>网络传输格式：{@code WATCH_EVENT {type} {path}}
  *

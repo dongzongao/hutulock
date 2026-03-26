@@ -7,7 +7,7 @@
 package com.hutulock.model.znode;
 
 /**
- * ZNode 类型，对标 ZooKeeper 的 CreateMode。
+ * ZNode 类型，枚举，定义节点的生命周期和序号行为。
  *
  * @author HutuLock Authors
  * @since 1.0.0

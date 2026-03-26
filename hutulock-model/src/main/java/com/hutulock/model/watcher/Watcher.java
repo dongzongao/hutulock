@@ -7,7 +7,7 @@
 package com.hutulock.model.watcher;
 
 /**
- * Watcher 接口（对标 ZooKeeper Watcher）
+ * Watcher 接口
  *
  * <p>Watcher 是一次性的（One-shot）：触发后自动注销，需重新注册。
  *

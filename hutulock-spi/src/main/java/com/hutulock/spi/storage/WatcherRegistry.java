@@ -13,7 +13,7 @@ import io.netty.channel.Channel;
 /**
  * Watcher 注册表接口（SPI 边界契约）
  *
- * <p>对标 ZooKeeper 的 WatchManager，维护 path → Channel 的映射。
+ * <p>维护 path → Channel 的映射。
  * Watcher 是一次性的（One-shot）：触发后自动注销。
  *
  * @author HutuLock Authors

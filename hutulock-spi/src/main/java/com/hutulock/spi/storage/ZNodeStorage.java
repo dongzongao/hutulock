@@ -16,7 +16,7 @@ import java.util.List;
 /**
  * ZNode 存储接口（SPI 边界契约）
  *
- * <p>对标 ZooKeeper 的 DataTree，定义 ZNode 树形存储的操作语义。
+ * <p>定义 ZNode 树形存储的操作语义。
  * 所有写操作执行后触发对应的 Watcher 事件。
  *
  * @author HutuLock Authors

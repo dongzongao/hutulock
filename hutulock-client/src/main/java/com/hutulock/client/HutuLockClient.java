@@ -246,7 +246,7 @@ public class HutuLockClient implements AutoCloseable {
     }
 
     /**
-     * 重新检查锁（对标 ZooKeeper 客户端在 Watcher 回调中重新 getChildren）。
+     * 重新检查锁（Watcher 触发后重新检查锁）。
      */
     private boolean recheckLock(LockContext ctx, long deadline) throws Exception {
         CompletableFuture<Message> future =

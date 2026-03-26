@@ -9,7 +9,7 @@ package com.hutulock.model.znode;
 /**
  * ZNode 数据节点（值对象）
  *
- * <p>对标 ZooKeeper 的 ZNode，包含路径、类型、数据和元数据（Stat）。
+ * <p>包含路径、类型、数据和元数据（Stat）。
  *
  * @author HutuLock Authors
  * @since 1.0.0

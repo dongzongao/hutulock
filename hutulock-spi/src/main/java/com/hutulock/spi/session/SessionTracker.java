@@ -12,7 +12,7 @@ import io.netty.channel.Channel;
 /**
  * 会话追踪器接口（SPI 边界契约）
  *
- * <p>对标 ZooKeeper 的 SessionTracker，负责会话的完整生命周期管理。
+ * <p>负责会话的完整生命周期管理。
  *
  * @author HutuLock Authors
  * @since 1.0.0
