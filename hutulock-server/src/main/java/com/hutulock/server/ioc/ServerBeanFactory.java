@@ -125,10 +125,11 @@ public final class ServerBeanFactory {
                     ctx.getBean(EventBus.class),
                     ctx.getBean(com.hutulock.server.mem.MemoryManager.class));
             tree.setNodeId(nodeId);
-            ProxyBuilder<ZNodeStorage> builder = ProxyBuilder.wrap(ZNodeStorage.class, tree);
+            ZNodeStorage storage = tree;  // 显式向上转型，帮助泛型推断
+            ProxyBuilder<ZNodeStorage> builder = ProxyBuilder.wrap(ZNodeStorage.class, storage);
             if (proxyEnabled("logging")) builder.withLogging();
             if (proxyEnabled("metrics")) builder.withMetrics();
-            return (proxyEnabled("logging") || proxyEnabled("metrics")) ? builder.build() : tree;
+            return (proxyEnabled("logging") || proxyEnabled("metrics")) ? builder.build() : storage;
         }));
 
         // ---- 5. 会话层 ----

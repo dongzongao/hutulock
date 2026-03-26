@@ -9,67 +9,71 @@ package com.hutulock.server.mem;
 import com.hutulock.spi.lock.LockToken;
 
 /**
- * 可池化的 LockToken
+ * 可池化的 LockToken 包装器（组合模式）
  *
- * <p>继承 {@link LockToken} 并实现 {@link ObjectPool.Pooled}，
- * 支持通过 {@link ObjectPool} 复用，减少高频锁操作中的对象分配。
+ * <p>{@link LockToken} 是 final 类，无法继承，改用组合：
+ * 持有一个可复用的 {@link LockToken} 引用，通过 {@link #init} 重新赋值。
  *
  * <p>使用方式：
  * <pre>{@code
- *   PooledLockToken token = pool.borrow();
- *   token.init(lockName, seqNodePath, sessionId);
- *   try {
- *       // 使用 token
- *   } finally {
- *       pool.release(token);  // 自动调用 reset()
- *   }
+ *   PooledLockToken wrapper = pool.borrow();
+ *   wrapper.init(lockName, seqNodePath, sessionId);
+ *   LockToken token = wrapper.token();   // 对外暴露 LockToken
+ *   // ...
+ *   pool.release(wrapper);               // 自动调用 reset()
  * }</pre>
  *
  * @author HutuLock Authors
  * @since 1.0.0
  */
-public final class PooledLockToken extends LockToken implements ObjectPool.Pooled {
+public final class PooledLockToken implements ObjectPool.Pooled {
 
-    // 可变字段，通过 init() 重新赋值
-    private String mutableLockName;
-    private String mutableSeqNodePath;
-    private String mutableSessionId;
-    private long   mutableAcquiredAt;
+    private String lockName;
+    private String seqNodePath;
+    private String sessionId;
+    private long   acquiredAt;
 
     /** 无参构造，供对象池预分配使用。 */
-    public PooledLockToken() {
-        super("__pool__", "__pool__", "__pool__");
-    }
+    public PooledLockToken() {}
 
     /**
      * 初始化（借出后调用，替代构造函数）。
      */
     public PooledLockToken init(String lockName, String seqNodePath, String sessionId) {
-        this.mutableLockName    = lockName;
-        this.mutableSeqNodePath = seqNodePath;
-        this.mutableSessionId   = sessionId;
-        this.mutableAcquiredAt  = System.currentTimeMillis();
+        this.lockName    = lockName;
+        this.seqNodePath = seqNodePath;
+        this.sessionId   = sessionId;
+        this.acquiredAt  = System.currentTimeMillis();
         return this;
     }
 
-    @Override public String getLockName()    { return mutableLockName;    }
-    @Override public String getSeqNodePath() { return mutableSeqNodePath; }
-    @Override public String getSessionId()   { return mutableSessionId;   }
-    @Override public long   getAcquiredAt()  { return mutableAcquiredAt;  }
-    @Override public long   heldMillis()     { return System.currentTimeMillis() - mutableAcquiredAt; }
+    /**
+     * 构建 {@link LockToken}（对外暴露标准接口）。
+     * 注意：每次调用仍会 new 一个 LockToken，但 PooledLockToken 本身被复用，
+     * 减少了包装对象的分配。如需完全零分配，可直接使用 getter。
+     */
+    public LockToken token() {
+        return new LockToken(lockName, seqNodePath, sessionId);
+    }
+
+    public String getLockName()    { return lockName;    }
+    public String getSeqNodePath() { return seqNodePath; }
+    public String getSessionId()   { return sessionId;   }
+    public long   getAcquiredAt()  { return acquiredAt;  }
+    public long   heldMillis()     { return System.currentTimeMillis() - acquiredAt; }
 
     /** 归还前清理状态。 */
     @Override
     public void reset() {
-        mutableLockName    = null;
-        mutableSeqNodePath = null;
-        mutableSessionId   = null;
-        mutableAcquiredAt  = 0;
+        lockName    = null;
+        seqNodePath = null;
+        sessionId   = null;
+        acquiredAt  = 0;
     }
 
     @Override
     public String toString() {
         return String.format("PooledLockToken{lock=%s, seq=%s, session=%s}",
-            mutableLockName, mutableSeqNodePath, mutableSessionId);
+            lockName, seqNodePath, sessionId);
     }
 }

@@ -56,9 +56,10 @@ public final class MemoryManager implements Lifecycle {
 
     @Override
     public void shutdown() {
-        log.info("MemoryManager stats — pathCache.size={}, lockToken.hitRate={:.2f}%, borrows={}",
+        log.info("MemoryManager stats — pathCache.size={}, lockToken.localHitRate={:.2f}%, globalHitRate={:.2f}%, borrows={}",
             pathCache.size(),
-            lockTokenPool.hitRate() * 100,
+            lockTokenPool.localHitRate()  * 100,
+            lockTokenPool.globalHitRate() * 100,
             lockTokenPool.getBorrowCount());
     }
 }
