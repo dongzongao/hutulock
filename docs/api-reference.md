@@ -7,7 +7,7 @@
 ```java
 // 构建客户端
 HutuLockClient client = HutuLockClient.builder()
-    .addNode("127.0.0.1", 8881)   // 添加集群节点（可多个）
+    .addNode("127.0.0.1", 8881)
     .addNode("127.0.0.1", 8882)
     .config(ClientProperties.builder()
         .connectTimeout(3000)
@@ -84,6 +84,34 @@ server.start();
 
 ---
 
+## CLI API
+
+### 启动方式
+
+```bash
+# 交互模式
+java -jar hutulock-cli.jar
+
+# 启动时自动连接
+java -jar hutulock-cli.jar 127.0.0.1:8881 127.0.0.1:8882
+```
+
+### CliContext（编程方式使用 CLI 逻辑）
+
+```java
+try (CliContext ctx = new CliContext()) {
+    ctx.connect(List.of("127.0.0.1:8881", "127.0.0.1:8882"));
+
+    boolean acquired = ctx.lock("order-lock", 30);
+    if (acquired) {
+        System.out.println(ctx.getStatus());
+        ctx.unlock("order-lock");
+    }
+}
+```
+
+---
+
 ## SPI 扩展接口
 
 ### 自定义认证器
@@ -92,7 +120,6 @@ server.start();
 public class JwtAuthenticator implements Authenticator {
     @Override
     public AuthResult authenticate(AuthToken token) {
-        // 验证 JWT token
         String jwt = token.getCredential();
         try {
             Claims claims = Jwts.parser()
@@ -113,7 +140,6 @@ public class JwtAuthenticator implements Authenticator {
 public class DatabaseAuthorizer implements Authorizer {
     @Override
     public boolean isPermitted(String clientId, String lockName, Permission permission) {
-        // 从数据库查询权限
         return permissionRepository.exists(clientId, lockName, permission.name());
     }
 }
@@ -125,14 +151,13 @@ public class DatabaseAuthorizer implements Authorizer {
 public class JmxMetricsCollector implements MetricsCollector {
     @Override
     public void onLockAcquired(String lockName) {
-        // 上报到 JMX
         lockAcquiredCounter.increment();
     }
     // ... 其他方法
 }
 ```
 
-### 自定义事件监听器
+### 订阅内部事件
 
 ```java
 // 订阅锁事件
@@ -145,10 +170,8 @@ eventBus.subscribe(LockEvent.class, event -> {
 });
 
 // 订阅所有事件（用于审计）
-eventBus.subscribe(HutuEvent.class, event -> {
-    auditLog.write(event.getSourceNodeId(), event.getEventType(),
-        event.getTimestamp());
-});
+eventBus.subscribe(HutuEvent.class, event ->
+    auditLog.write(event.getSourceNodeId(), event.getEventType(), event.getTimestamp()));
 ```
 
 ---

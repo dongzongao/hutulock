@@ -4,7 +4,7 @@
 
 1. [分布式锁模型](#1-分布式锁模型)
 2. [Raft 共识算法](#2-raft-共识算法)
-3. [ZooKeeper 顺序节点模式](#3-zookeeper-顺序节点模式)
+3. [顺序节点公平锁](#3-顺序节点公平锁)
 4. [Session 会话机制](#4-session-会话机制)
 5. [看门狗机制](#5-看门狗机制)
 6. [Watcher 事件系统](#6-watcher-事件系统)
@@ -121,16 +121,16 @@ Leader                    Follower
 
 ---
 
-## 3. ZooKeeper 顺序节点模式
+## 3. 顺序节点公平锁
 
-### ZNodeType 对应关系
+### ZNodeType 说明
 
-| HutuLock | ZooKeeper CreateMode | 说明 |
-|----------|---------------------|------|
-| PERSISTENT | PERSISTENT | 持久节点 |
-| EPHEMERAL | EPHEMERAL | 临时节点（会话断开自动删除） |
-| PERSISTENT_SEQ | PERSISTENT_SEQUENTIAL | 持久顺序节点 |
-| EPHEMERAL_SEQ | EPHEMERAL_SEQUENTIAL | 临时顺序节点（分布式锁核心） |
+| 类型 | 生命周期 | 序号 | 用途 |
+|------|---------|------|------|
+| PERSISTENT | 永久 | 无 | 锁根节点 |
+| EPHEMERAL | 会话绑定 | 无 | 临时占位 |
+| PERSISTENT_SEQ | 永久 | 有 | 持久排队 |
+| EPHEMERAL_SEQ | 会话绑定 | 有 | 分布式锁核心 |
 
 ### 顺序节点序号分配
 
@@ -218,10 +218,10 @@ HELD ──(超时)──→ EXPIRED
 
 ## 6. Watcher 事件系统
 
-### 两种 Watcher 的区别
+### 两种事件通知的区别
 
-| 特性 | WatcherRegistry（ZooKeeper 风格） | EventBus（内部总线） |
-|------|----------------------------------|---------------------|
+| 特性 | WatcherRegistry（网络推送） | EventBus（内部总线） |
+|------|--------------------------|---------------------|
 | 订阅方 | 网络客户端（Channel） | 内部 Java 组件 |
 | 触发次数 | One-shot（触发后自动注销） | 持久订阅 |
 | 传输方式 | Netty Channel 推送 | 内存队列异步分发 |
@@ -388,9 +388,16 @@ HutuEvent（抽象基类）
 └─────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐
+│                    hutulock-cli                          │
+│  HutuLockCli  CliContext  CliCommand                     │
+│       ↓ 依赖                                             │
+│  hutulock-client                                         │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
 │                    hutulock-config                       │
 │  YamlConfigProvider  ServerProperties  ClientProperties  │
 │       ↓ 依赖                                             │
-│  hutulock-model（仅用于异常类型）                         │
+│  hutulock-model                                          │
 └─────────────────────────────────────────────────────────┘
 ```
