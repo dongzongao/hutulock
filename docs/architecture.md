@@ -138,6 +138,87 @@ hutulock-spi    ← 接口契约，依赖 model
 
 ---
 
+---
+
+## ADR-009：IoC 容器管理内存组件
+
+**背景：** `HutuLockServer` 构造函数中手动 `new` 所有组件，依赖关系散落在一处，难以替换和测试。
+
+**决策：** 在 `hutulock-server` 内实现轻量级 IoC 容器（`com.hutulock.server.ioc`），不引入 Spring 等外部框架。
+
+**核心类：**
+
+| 类 | 职责 |
+|----|------|
+| `BeanDefinition<T>` | Bean 元数据（名称、类型、工厂方法） |
+| `ApplicationContext` | 容器核心：延迟实例化、按类型/名称查找、生命周期调度 |
+| `Lifecycle` | 生命周期接口（`start()` / `shutdown()`） |
+| `ServerBeanFactory` | 服务端专属配置：集中声明所有 Bean 及其依赖关系 |
+
+**Bean 注册顺序（从底层到上层）：**
+
+```
+serverProperties → eventBus → metrics → metricsHttpServer
+  → watcherRegistry → zNodeStorage → sessionManager → sessionTracker
+  → lockManager → raftNode → securityContext → lockServerHandler
+```
+
+**生命周期：**
+- `ctx.start()` 按注册顺序调用所有 `Lifecycle.start()`
+- `ctx.close()` 按注册逆序调用所有 `Lifecycle.shutdown()`
+
+**理由：**
+- 零外部依赖，与项目整体风格一致
+- `withSecurity()` 可通过重新注册同名 Bean 覆盖默认实现
+- 测试时可单独替换任意 Bean
+
+---
+
+## ADR-010：代理模块实现横切关注点
+
+**背景：** 日志、指标采集、重试等横切关注点散落在各实现类中，难以统一管理。
+
+**决策：** 新增 `hutulock-proxy` 模块，基于 JDK 动态代理实现，通过 `ProxyBuilder` 链式组合。
+
+**模块结构：**
+
+```
+hutulock-proxy/
+  api/
+    Proxiable.java      代理类型枚举（LOGGING / METRICS / RETRY）
+    ProxyCatalog.java   各 SPI 接口支持的代理类型声明
+  handler/
+    LoggingHandler.java  方法调用日志（入参、耗时、异常）
+    MetricsHandler.java  调用次数、失败次数、平均耗时统计
+    RetryHandler.java    失败自动重试（可配置次数、退避、异常白名单）
+  support/
+    ProxyBuilder.java    链式构建 API
+```
+
+**各 SPI 接口支持的代理类型：**
+
+| SPI 接口 | Logging | Metrics | Retry |
+|----------|:-------:|:-------:|:-----:|
+| `ZNodeStorage` | ✓ | ✓ | |
+| `LockService` | ✓ | ✓ | ✓ |
+| `SessionTracker` | ✓ | | |
+| `EventBus` | ✓ | | |
+| `WatcherRegistry` | ✓ | | |
+
+**使用示例：**
+
+```java
+ZNodeStorage proxied = ProxyBuilder.wrap(ZNodeStorage.class, realImpl)
+    .withLogging()
+    .withMetrics()
+    .build();
+// 调用链：LoggingProxy → MetricsProxy → realImpl
+```
+
+**注意：** 被代理的 Bean 若同时实现 `Lifecycle`，需将真实实现单独注册到容器（保留生命周期感知），代理版本作为对外暴露的接口 Bean。
+
+---
+
 ## 当前已知限制
 
 | 限制 | 影响 | 计划 |

@@ -35,6 +35,8 @@ HutuLock 是一个生产级分布式锁服务，核心特性：
 | 安全 | Token/HMAC 认证、ACL 授权、TLS 加密、限流、审计日志 |
 | 可观测 | Prometheus Metrics、结构化日志、事件总线 |
 | CLI | 交互式命令行工具，支持连接集群、管理锁、查看状态 |
+| IoC 容器 | 轻量级内置容器管理所有内存组件，支持生命周期和依赖注入 |
+| 代理增强 | JDK 动态代理模块，无侵入地为 SPI 接口添加日志、指标、重试 |
 | 可扩展 | 全接口化设计（SPI），所有组件可替换 |
 
 ---
@@ -46,7 +48,8 @@ hutulock/
 ├── hutulock-model/     领域模型（零外部依赖）
 ├── hutulock-spi/       服务接口契约（SPI）
 ├── hutulock-config/    配置加载（YAML / 代码）
-├── hutulock-server/    服务端实现
+├── hutulock-proxy/     JDK 动态代理（日志 / 指标 / 重试）
+├── hutulock-server/    服务端实现（含 IoC 容器）
 ├── hutulock-client/    客户端 SDK
 └── hutulock-cli/       交互式命令行工具
 ```
@@ -57,10 +60,13 @@ hutulock/
 hutulock-model
     ↑
 hutulock-spi  ←── hutulock-config
-    ↑                   ↑
-hutulock-server     hutulock-client
-                        ↑
-                    hutulock-cli
+    ↑    ↑              ↑
+    │  hutulock-proxy   │
+    │         ↑         │
+    └── hutulock-server ┘
+                        hutulock-client
+                              ↑
+                          hutulock-cli
 ```
 
 ---
@@ -73,19 +79,145 @@ hutulock-server     hutulock-client
 mvn clean package -DskipTests
 ```
 
-### 启动单节点服务端
+### 使用脚本启动（推荐）
 
-```bash
-java -jar hutulock-server/target/hutulock-server-1.0.0.jar node1 8881 9881
+项目提供三个脚本，位于 `bin/` 目录：
+
+| 脚本 | 用途 |
+|------|------|
+| `bin/server.sh` | 启动单个服务节点（前台运行） |
+| `bin/cluster.sh` | 本地 3 节点集群一键管理（后台运行，开发/测试用） |
+| `bin/cli.sh` | 启动交互式命令行工具 |
+
+---
+
+### bin/server.sh — 单节点启动
+
+```
+用法：./bin/server.sh <nodeId> <clientPort> <raftPort> [peer ...] [选项]
+
+选项：
+  --proxy <types>   启用代理增强，逗号分隔（logging / metrics / all）
+  --config <path>   指定外部 hutulock.yml 路径
+  --jvm <opts>      追加 JVM 参数（引号包裹）
 ```
 
-### 启动 3 节点集群
+**单节点（开发模式）：**
 
 ```bash
-java -jar hutulock-server.jar node1 8881 9881 node2:127.0.0.1:9882 node3:127.0.0.1:9883
-java -jar hutulock-server.jar node2 8882 9882 node1:127.0.0.1:9881 node3:127.0.0.1:9883
-java -jar hutulock-server.jar node3 8883 9883 node1:127.0.0.1:9881 node2:127.0.0.1:9882
+./bin/server.sh node1 8881 9881
 ```
+
+**开启日志 + 指标代理：**
+
+```bash
+./bin/server.sh node1 8881 9881 --proxy logging,metrics
+```
+
+**3 节点集群（分别在三台机器上执行）：**
+
+```bash
+./bin/server.sh node1 8881 9881 node2:192.168.1.2:9882 node3:192.168.1.3:9883
+./bin/server.sh node2 8882 9882 node1:192.168.1.1:9881 node3:192.168.1.3:9883
+./bin/server.sh node3 8883 9883 node1:192.168.1.1:9881 node2:192.168.1.2:9882
+```
+
+**带代理 + 自定义配置文件：**
+
+```bash
+./bin/server.sh node1 8881 9881 \
+  --proxy all \
+  --config /etc/hutulock/hutulock.yml \
+  --jvm "-Xmx1g"
+```
+
+启动后输出：
+
+```
+============================================
+ HutuLock Server
+ Node ID    : node1
+ Client Port: 8881
+ Raft Port  : 9881
+ Peers      : none
+ Proxy      : logging,metrics
+ JAR        : .../hutulock-server-1.0.0.jar
+ Log Dir    : .../logs
+============================================
+```
+
+---
+
+### bin/cluster.sh — 本地集群管理
+
+```
+用法：./bin/cluster.sh <命令> [选项]
+
+命令：
+  start   [--proxy types]   后台启动 3 节点集群
+  stop                      停止所有节点
+  restart [--proxy types]   重启集群
+  status                    查看各节点运行状态
+  logs    [nodeId]          实时查看节点日志（默认 node1）
+```
+
+**启动集群：**
+
+```bash
+./bin/cluster.sh start
+```
+
+**启动集群并开启全量代理：**
+
+```bash
+./bin/cluster.sh start --proxy all
+```
+
+**查看状态：**
+
+```bash
+./bin/cluster.sh status
+# HutuLock Cluster Status:
+#   node1: RUNNING  PID=12345  client=:8881  metrics=:9090  health=UP
+#   node2: RUNNING  PID=12346  client=:8882  metrics=:9091  health=UP
+#   node3: RUNNING  PID=12347  client=:8883  metrics=:9092  health=UP
+```
+
+**实时查看 node2 日志：**
+
+```bash
+./bin/cluster.sh logs node2
+```
+
+**停止集群：**
+
+```bash
+./bin/cluster.sh stop
+```
+
+集群默认端口分配：
+
+| 节点 | 客户端端口 | Raft 端口 | Metrics 端口 |
+|------|-----------|----------|-------------|
+| node1 | 8881 | 9881 | 9090 |
+| node2 | 8882 | 9882 | 9091 |
+| node3 | 8883 | 9883 | 9092 |
+
+---
+
+### 代理增强（--proxy）
+
+`--proxy` 通过系统属性 `-Dhutulock.proxy=<types>` 控制代理层，默认不启用：
+
+| 值 | 效果 |
+|----|------|
+| `logging` | 记录每次方法调用的入参、耗时、异常（DEBUG 级别） |
+| `metrics` | 统计调用次数、失败次数、平均耗时 |
+| `all` | 等价于 `logging,metrics` |
+
+生效范围：`ZNodeStorage`（日志+指标）、`SessionTracker`（日志）、`EventBus`（日志）。
+
+---
 
 ### 客户端 SDK 使用
 
@@ -128,14 +260,31 @@ try {
 
 ## CLI 工具
 
-### 启动
+### bin/cli.sh — 交互式命令行
+
+```
+用法：./bin/cli.sh [host:port ...] [选项]
+
+选项：
+  --jvm <opts>   追加 JVM 参数（引号包裹）
+```
+
+**交互模式（启动后手动 connect）：**
 
 ```bash
-# 交互模式
-java -jar hutulock-cli/target/hutulock-cli-1.0.0.jar
+./bin/cli.sh
+```
 
-# 启动时自动连接
-java -jar hutulock-cli.jar 127.0.0.1:8881 127.0.0.1:8882
+**启动时自动连接集群：**
+
+```bash
+./bin/cli.sh 127.0.0.1:8881 127.0.0.1:8882 127.0.0.1:8883
+```
+
+**自定义 JVM 参数：**
+
+```bash
+./bin/cli.sh --jvm "-Xmx256m" 127.0.0.1:8881
 ```
 
 ### 支持命令

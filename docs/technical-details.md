@@ -10,8 +10,10 @@
 6. [Watcher 事件系统](#6-watcher-事件系统)
 7. [事件总线](#7-事件总线)
 8. [网络协议](#8-网络协议)
-9. [兜底机制](#9-兜底机制)
-10. [模块依赖图](#10-模块依赖图)
+9. [IoC 容器](#9-ioc-容器)
+10. [代理模块](#10-代理模块)
+11. [兜底机制](#11-兜底机制)
+12. [模块依赖图](#12-模块依赖图)
 
 ---
 
@@ -319,7 +321,110 @@ HutuEvent（抽象基类）
 
 ---
 
-## 9. 兜底机制
+## 9. IoC 容器
+
+### 核心设计
+
+容器位于 `com.hutulock.server.ioc`，共 4 个类：
+
+| 类 | 职责 |
+|----|------|
+| `BeanDefinition<T>` | Bean 元数据（名称、类型、`Supplier` 工厂） |
+| `ApplicationContext` | 容器核心：延迟实例化、单例缓存、生命周期调度 |
+| `Lifecycle` | 生命周期接口（`start()` / `shutdown()`） |
+| `ServerBeanFactory` | 服务端专属配置，集中声明所有 Bean 及依赖关系 |
+
+### ApplicationContext 工作流程
+
+```
+register(BeanDefinition)  → 记录定义，不触发实例化
+getBean(name/type)        → 首次调用时执行工厂方法，结果缓存为单例
+start()                   → 按注册顺序实例化所有 Bean，调用 Lifecycle.start()
+close()                   → 按注册逆序调用 Lifecycle.shutdown()
+```
+
+### 代理 Bean 与 Lifecycle 分离模式
+
+JDK 动态代理只暴露目标接口，会屏蔽实现类上额外实现的 `Lifecycle`。
+解决方案：真实实现和代理版本分别注册为不同名称的 Bean：
+
+```java
+// 真实实现（容器可感知 Lifecycle.shutdown()）
+ctx.register(BeanDefinition.of("sessionManager", DefaultSessionManager.class,
+    () -> new DefaultSessionManager(...)));
+
+// 代理版本（对外暴露的接口 Bean，带日志增强）
+ctx.register(BeanDefinition.of("sessionTracker", SessionTracker.class,
+    () -> ProxyBuilder.wrap(SessionTracker.class, ctx.getBean(DefaultSessionManager.class))
+            .withLogging().build()));
+```
+
+---
+
+## 10. 代理模块
+
+### 模块结构
+
+```
+hutulock-proxy/
+  api/
+    Proxiable.java      代理类型枚举（LOGGING / METRICS / RETRY）
+    ProxyCatalog.java   各 SPI 接口支持的代理类型声明
+  handler/
+    LoggingHandler.java  方法调用日志（入参、耗时、异常）
+    MetricsHandler.java  调用次数、失败次数、平均耗时统计
+    RetryHandler.java    失败自动重试
+  support/
+    ProxyBuilder.java    链式构建 API
+```
+
+### ProxyBuilder 链式 API
+
+```java
+// 日志 + 指标双层代理
+ZNodeStorage proxied = ProxyBuilder.wrap(ZNodeStorage.class, realImpl)
+    .withLogging()
+    .withMetrics()
+    .build();
+// 调用链（外层先执行）：LoggingProxy → MetricsProxy → realImpl
+
+// 带重试（LockService 专用）
+LockService retried = ProxyBuilder.wrap(LockService.class, lockService)
+    .withLogging()
+    .withRetry(3, 500L,
+        Set.of("release", "shutdown"),   // 不重试的方法
+        RuntimeException.class)
+    .build();
+
+// 获取指标快照
+ProxyBuilder.MetricsHolder<ZNodeStorage> holder = new ProxyBuilder.MetricsHolder<>();
+ZNodeStorage proxied = ProxyBuilder.wrap(ZNodeStorage.class, realImpl)
+    .withMetrics(holder)
+    .build();
+Map<String, String> stats = holder.snapshot();
+// {"ZNodeStorage.create" → "calls=42 errors=0 avgMs=3", ...}
+```
+
+### 各 SPI 接口支持的代理类型
+
+| SPI 接口 | Logging | Metrics | Retry | 说明 |
+|----------|:-------:|:-------:|:-----:|------|
+| `ZNodeStorage` | ✓ | ✓ | | 读写操作频繁，日志+指标均有价值 |
+| `LockService` | ✓ | ✓ | ✓ | 核心业务，全量支持 |
+| `SessionTracker` | ✓ | | | 生命周期管理，日志追踪即可 |
+| `EventBus` | ✓ | | | 事件流追踪 |
+| `WatcherRegistry` | ✓ | | | 注册/触发追踪 |
+
+### LoggingHandler 日志格式
+
+```
+DEBUG [create] args=[/locks/order-lock, EPHEMERAL_SEQ, ...] → /locks/order-lock/seq-0000000001 (3ms)
+WARN  [create] args=[/locks/order-lock, ...] threw HutuLockException (1ms): parent not found
+```
+
+---
+
+## 11. 兜底机制
 
 ### 多层兜底设计
 
@@ -356,11 +461,16 @@ HutuEvent（抽象基类）
 
 ---
 
-## 10. 模块依赖图
+## 12. 模块依赖图
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    hutulock-server                       │
+│                                                          │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │  ioc/  ApplicationContext  ServerBeanFactory     │    │
+│  │        BeanDefinition      Lifecycle             │    │
+│  └─────────────────────────────────────────────────┘    │
 │                                                          │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐  │
 │  │ RaftNode │  │LockMgr   │  │SessionMgr│  │ZNode   │  │
@@ -378,6 +488,14 @@ HutuEvent（抽象基类）
 │  │                 hutulock-model                        │ │
 │  │  ZNode  ZNodePath  Session  WatchEvent  Message       │ │
 │  └───────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│                    hutulock-proxy                        │
+│  ProxyBuilder  LoggingHandler  MetricsHandler            │
+│  RetryHandler  ProxyCatalog                              │
+│       ↓ 依赖                                             │
+│  hutulock-spi                                            │
 └─────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐

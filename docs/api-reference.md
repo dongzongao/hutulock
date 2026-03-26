@@ -176,7 +176,111 @@ eventBus.subscribe(HutuEvent.class, event ->
 
 ---
 
-## 错误码参考
+## IoC 容器 API
+
+### ApplicationContext
+
+```java
+// 创建容器并注册 Bean
+ApplicationContext ctx = new ApplicationContext();
+ctx.register(BeanDefinition.of("metrics", MetricsCollector.class,
+    () -> new PrometheusMetricsCollector("node1")));
+ctx.register(BeanDefinition.of("storage", ZNodeStorage.class,
+    () -> new DefaultZNodeTree(
+        ctx.getBean(WatcherRegistry.class),
+        ctx.getBean(MetricsCollector.class),
+        ctx.getBean(EventBus.class))));
+
+// 启动（按注册顺序调用 Lifecycle.start()）
+ctx.start();
+
+// 按类型获取 Bean
+MetricsCollector metrics = ctx.getBean(MetricsCollector.class);
+
+// 按名称获取 Bean
+ZNodeStorage storage = ctx.getBean("storage");
+
+// 关闭（按注册逆序调用 Lifecycle.shutdown()）
+ctx.close();
+```
+
+### ServerBeanFactory
+
+```java
+// 一行注册所有服务端 Bean
+ServerBeanFactory.register(ctx, "node1", 9881, new YamlConfigProvider());
+
+// 覆盖默认安全上下文（在 start() 之前调用）
+server.withSecurity(SecurityContext.builder()
+    .authenticator(new TokenAuthenticator().addClient("svc", "token"))
+    .build());
+```
+
+### 自定义 Bean 注册
+
+```java
+// 替换默认 EventBus 实现（如接入 Kafka）
+ctx.register(BeanDefinition.of("eventBus", EventBus.class,
+    () -> new KafkaEventBus("localhost:9092")));
+// 同名 Bean 会覆盖之前的注册
+```
+
+---
+
+## 代理模块 API
+
+### ProxyBuilder
+
+```java
+// 日志代理
+ZNodeStorage logged = ProxyBuilder.wrap(ZNodeStorage.class, realImpl)
+    .withLogging()
+    .build();
+
+// 日志 + 指标双层代理
+ZNodeStorage proxied = ProxyBuilder.wrap(ZNodeStorage.class, realImpl)
+    .withLogging()
+    .withMetrics()
+    .build();
+
+// 带指标快照引用
+ProxyBuilder.MetricsHolder<ZNodeStorage> holder = new ProxyBuilder.MetricsHolder<>();
+ZNodeStorage proxied = ProxyBuilder.wrap(ZNodeStorage.class, realImpl)
+    .withMetrics(holder)
+    .build();
+Map<String, String> stats = holder.snapshot();
+// {"ZNodeStorage.create" → "calls=42 errors=0 avgMs=3", ...}
+
+// 重试代理（LockService 推荐配置）
+LockService retried = ProxyBuilder.wrap(LockService.class, lockService)
+    .withLogging()
+    .withRetry(
+        3,                                    // 最大重试次数
+        500L,                                 // 退避间隔 ms
+        Set.of("release", "shutdown"),        // 不重试的方法
+        RuntimeException.class)               // 可重试异常类型
+    .build();
+```
+
+### ProxyCatalog
+
+```java
+// 查询某接口支持的代理类型
+EnumSet<ProxyType> types = ProxyCatalog.supportedTypes(ZNodeStorage.class);
+// → [LOGGING, METRICS]
+
+// 判断是否支持某代理类型
+boolean canRetry = ProxyCatalog.supports(LockService.class, ProxyType.RETRY);
+// → true
+
+// 获取所有可代理接口
+Set<Class<?>> proxiable = ProxyCatalog.proxiableInterfaces();
+
+// 打印代理目录（启动日志）
+log.info(ProxyCatalog.describe());
+```
+
+---
 
 | 错误码 | 值 | 说明 |
 |--------|-----|------|
