@@ -120,7 +120,7 @@ public class HutuLockServer {
         this.lockManager = new DefaultLockManager(zNodeStorage, sessionTracker, metrics, EventBus.noop());
 
         // 5. Raft 共识层
-        this.raftNode = new RaftNode(nodeId, raftPort, lockManager, props, metrics);
+        this.raftNode = new RaftNode(nodeId, raftPort, lockManager, props, metrics, EventBus.noop());
 
         // 6. 安全上下文（默认禁用，可通过 withSecurity() 配置）
         this.securityContext = props.securityEnabled
