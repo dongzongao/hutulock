@@ -38,6 +38,7 @@
         <module>hutulock-model</module>
         <module>hutulock-spi</module>
         <module>hutulock-config</module>
+        <module>hutulock-proxy</module>
         <module>hutulock-server</module>
         <module>hutulock-client</module>
         <module>hutulock-cli</module>
@@ -80,6 +81,11 @@
             <dependency>
                 <groupId>com.hutulock</groupId>
                 <artifactId>hutulock-client</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.hutulock</groupId>
+                <artifactId>hutulock-proxy</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

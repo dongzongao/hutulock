@@ -22,6 +22,7 @@ import com.hutulock.server.metrics.MetricsHttpServer;
 import com.hutulock.server.metrics.PrometheusMetricsCollector;
 import com.hutulock.server.raft.RaftNode;
 import com.hutulock.server.security.*;
+import com.hutulock.proxy.support.ProxyBuilder;
 
 /**
  * 服务端 Bean 工厂
@@ -66,7 +67,9 @@ public final class ServerBeanFactory {
 
         // ---- 2. 事件总线 ----
         ctx.register(BeanDefinition.of("eventBus", EventBus.class,
-                () -> new DefaultEventBus()));
+                () -> ProxyBuilder.wrap(EventBus.class, new DefaultEventBus())
+                        .withLogging()
+                        .build()));
 
         // ---- 3. Metrics ----
         ctx.register(BeanDefinition.of("metrics", MetricsCollector.class, () -> {
@@ -97,11 +100,15 @@ public final class ServerBeanFactory {
                     ctx.getBean(MetricsCollector.class),
                     ctx.getBean(EventBus.class));
             tree.setNodeId(nodeId);
-            return tree;
+            return ProxyBuilder.wrap(ZNodeStorage.class, tree)
+                    .withLogging()
+                    .withMetrics()
+                    .build();
         }));
 
         // ---- 5. 会话层 ----
-        ctx.register(BeanDefinition.of("sessionTracker", SessionTracker.class, () -> {
+        // 先注册真实实现（容器可感知其 Lifecycle）
+        ctx.register(BeanDefinition.of("sessionManager", DefaultSessionManager.class, () -> {
             DefaultSessionManager mgr = new DefaultSessionManager(
                     ctx.getBean(ZNodeStorage.class),
                     ctx.getBean(MetricsCollector.class),
@@ -110,6 +117,11 @@ public final class ServerBeanFactory {
             mgr.setNodeId(nodeId);
             return mgr;
         }));
+        // 对外暴露代理版本（日志增强）
+        ctx.register(BeanDefinition.of("sessionTracker", SessionTracker.class,
+                () -> ProxyBuilder.wrap(SessionTracker.class, ctx.getBean(DefaultSessionManager.class))
+                        .withLogging()
+                        .build()));
 
         // ---- 6. 锁管理（同时作为 Raft 状态机）----
         ctx.register(BeanDefinition.of("lockManager", DefaultLockManager.class, () -> {
@@ -121,8 +133,6 @@ public final class ServerBeanFactory {
             mgr.setNodeId(nodeId);
             return mgr;
         }));
-
-        // ---- 7. Raft 共识层 ----
         ctx.register(BeanDefinition.of("raftNode", RaftNode.class,
                 () -> new RaftNode(nodeId, raftPort,
                         ctx.getBean(DefaultLockManager.class),
@@ -130,7 +140,7 @@ public final class ServerBeanFactory {
                         ctx.getBean(MetricsCollector.class),
                         ctx.getBean(EventBus.class))));
 
-        // ---- 8. 安全上下文 ----
+        // ---- 7. 安全上下文 ----
         ctx.register(BeanDefinition.of("securityContext", SecurityContext.class, () -> {
             ServerProperties props = ctx.getBean(ServerProperties.class);
             if (!props.securityEnabled) {
@@ -144,7 +154,7 @@ public final class ServerBeanFactory {
                     .build();
         }));
 
-        // ---- 9. 网络层 ----
+        // ---- 8. 网络层 ----
         ctx.register(BeanDefinition.of("lockServerHandler", LockServerHandler.class,
                 () -> new LockServerHandler(
                         ctx.getBean(DefaultLockManager.class),

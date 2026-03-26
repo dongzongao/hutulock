@@ -34,6 +34,10 @@
             <artifactId>hutulock-config</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.hutulock</groupId>
+            <artifactId>hutulock-proxy</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
         </dependency>
