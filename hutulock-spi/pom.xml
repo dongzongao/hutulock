@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.hutulock</groupId>
+        <artifactId>hutulock</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>hutulock-spi</artifactId>
+    <name>HutuLock SPI</name>
+    <description>
+        服务提供者接口层（SPI）：定义所有跨模块的服务边界契约。
+        依赖 hutulock-model（领域模型）和 Netty（Channel 引用）。
+        server 和 client 均依赖此模块，但互不依赖。
+
+        包结构（com.hutulock.spi）：
+          .lock      — 锁服务接口（LockService / LockToken）
+          .session   — 会话追踪接口（SessionTracker）
+          .storage   — 存储接口（ZNodeStorage）
+          .metrics   — 监控接口（MetricsCollector）
+          .event     — 事件总线接口 + 事件类型（EventBus / HutuEvent 及子类）
+          .security  — 安全接口（Authenticator / Authorizer / AuditLogger / RateLimiter）
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.hutulock</groupId>
+            <artifactId>hutulock-model</artifactId>
+        </dependency>
+        <!-- SessionTracker / ZNodeStorage 接口参数中引用了 Netty Channel -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+    </dependencies>
+</project>

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.hutulock</groupId>
+        <artifactId>hutulock</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>hutulock-model</artifactId>
+    <name>HutuLock Model</name>
+    <description>
+        领域模型层（零外部依赖）：值对象、枚举、异常体系、协议类型。
+        本模块不依赖任何框架，可被所有模块安全引用。
+
+        包结构（com.hutulock.model）：
+          .exception   — 异常体系（HutuLockException + ErrorCode）
+          .protocol    — 通信协议（CommandType + Message）
+          .session     — 会话模型（Session）
+          .watcher     — 观察者模型（Watcher + WatchEvent）
+          .znode       — ZNode 数据模型（ZNode / ZNodePath / ZNodeType）
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+    </dependencies>
+</project>

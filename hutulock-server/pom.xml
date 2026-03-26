@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.hutulock</groupId>
+        <artifactId>hutulock</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>hutulock-server</artifactId>
+    <name>HutuLock Server</name>
+    <description>
+        服务端实现：Raft 共识、ZNode 树形存储、Session 管理、看门狗、Metrics。
+        所有核心组件均有接口边界，实现类以 Default 前缀命名。
+    </description>
+
+    <dependencies>
+        <!-- 领域模型（零依赖） -->
+        <dependency>
+            <groupId>com.hutulock</groupId>
+            <artifactId>hutulock-model</artifactId>
+        </dependency>
+        <!-- SPI 接口契约 -->
+        <dependency>
+            <groupId>com.hutulock</groupId>
+            <artifactId>hutulock-spi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.hutulock</groupId>
+            <artifactId>hutulock-config</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.hutulock.server.HutuLockServer</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

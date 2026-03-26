@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+     | HutuLock — 基于 Raft + ZooKeeper 设计模式的高可用分布式锁
+     |
+     | 模块说明：
+     |   hutulock-common  — 公共接口、模型、协议、异常（无实现依赖）
+     |   hutulock-config  — 配置加载模块（YAML / Properties / 代码）
+     |   hutulock-server  — 服务端实现（Raft + ZNode + Session + Metrics）
+     |   hutulock-client  — 客户端 SDK（连接管理 + Watcher + 看门狗）
+     |
+     | 包名规范：com.hutulock.*
+     | 命名规范：接口 XxxService / XxxStorage / XxxTracker，实现 DefaultXxx
+    -->
+
+    <groupId>com.hutulock</groupId>
+    <artifactId>hutulock</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+
+    <name>HutuLock</name>
+    <description>High-availability distributed lock based on Raft consensus and ZooKeeper design patterns</description>
+    <url>https://github.com/hutulock/hutulock</url>
+
+    <licenses>
+        <license>
+            <name>Apache License 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+        </license>
+    </licenses>
+
+    <modules>
+        <module>hutulock-model</module>
+        <module>hutulock-spi</module>
+        <module>hutulock-config</module>
+        <module>hutulock-server</module>
+        <module>hutulock-client</module>
+    </modules>
+
+    <properties>
+        <java.version>11</java.version>
+        <maven.compiler.source>${java.version}</maven.compiler.source>
+        <maven.compiler.target>${java.version}</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- 依赖版本统一管理 -->
+        <netty.version>4.1.108.Final</netty.version>
+        <slf4j.version>2.0.12</slf4j.version>
+        <logback.version>1.5.3</logback.version>
+        <micrometer.version>1.12.4</micrometer.version>
+        <snakeyaml.version>2.2</snakeyaml.version>
+        <junit.version>5.10.2</junit.version>
+        <mockito.version>5.11.0</mockito.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- 内部模块 -->
+            <dependency>
+                <groupId>com.hutulock</groupId>
+                <artifactId>hutulock-model</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.hutulock</groupId>
+                <artifactId>hutulock-spi</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.hutulock</groupId>
+                <artifactId>hutulock-config</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- 网络 -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-all</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+
+            <!-- 日志 -->
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>${slf4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
+
+            <!-- Metrics -->
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-core</artifactId>
+                <version>${micrometer.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-registry-prometheus</artifactId>
+                <version>${micrometer.version}</version>
+            </dependency>
+
+            <!-- 配置文件解析 -->
+            <dependency>
+                <groupId>org.yaml</groupId>
+                <artifactId>snakeyaml</artifactId>
+                <version>${snakeyaml.version}</version>
+            </dependency>
+
+            <!-- 测试 -->
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-core</artifactId>
+                <version>${mockito.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
+                </plugin>
+                <!-- fat-jar 打包，子模块按需引用 -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-shade-plugin</artifactId>
+                    <version>3.5.2</version>
+                    <executions>
+                        <execution>
+                            <phase>package</phase>
+                            <goals><goal>shade</goal></goals>
+                            <configuration>
+                                <createDependencyReducedPom>false</createDependencyReducedPom>
+                                <filters>
+                                    <filter>
+                                        <artifact>*:*</artifact>
+                                        <excludes>
+                                            <exclude>META-INF/*.SF</exclude>
+                                            <exclude>META-INF/*.DSA</exclude>
+                                            <exclude>META-INF/*.RSA</exclude>
+                                        </excludes>
+                                    </filter>
+                                </filters>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

@@ -1,0 +1,63 @@
+# HutuLock 默认配置文件
+# 复制此文件到你的项目 classpath，按需修改
+
+hutulock:
+  server:
+    raft:
+      # 选举超时范围（毫秒），随机取值避免分票
+      electionTimeoutMin: 150
+      electionTimeoutMax: 300
+      # 心跳间隔（毫秒），应 < electionTimeoutMin/3
+      heartbeatInterval: 50
+      # Propose 超时（毫秒）
+      proposeTimeout: 10000
+      # Propose 失败重试
+      proposeRetryCount: 3
+      proposeRetryDelay: 500
+
+    watchdog:
+      # 看门狗 TTL（毫秒），超时无心跳则强制释放锁
+      ttl: 30000
+      # 扫描间隔（毫秒）
+      scanInterval: 1000
+
+    network:
+      soBacklog: 128
+      raftConnectTimeout: 3000
+      maxFrameLength: 4096
+
+    metrics:
+      enabled: true
+      # Prometheus scrape 端口（GET /metrics）
+      port: 9090
+
+  # 安全配置
+  security:
+    # 是否启用认证和授权（false = 开发模式，允许所有连接）
+    enabled: false
+    tls:
+      # 是否启用 TLS 加密传输
+      enabled: false
+      # PEM 格式证书文件路径（生产环境必须配置）
+      certFile: ""
+      # PEM 格式私钥文件路径（生产环境必须配置）
+      keyFile: ""
+      # 是否使用自签名证书（仅开发/测试，enabled=true 且未配置证书时生效）
+      selfSigned: false
+    rateLimit:
+      # 每个客户端每秒最大请求数
+      qps: 100
+      # 突发容量（令牌桶容量）
+      burst: 200
+
+  client:
+    # 连接超时（毫秒）
+    connectTimeout: 3000
+    # 获取锁默认超时（秒）
+    lockTimeout: 30
+
+    watchdog:
+      # 看门狗 TTL（毫秒），应与服务端一致
+      ttl: 30000
+      # 心跳间隔（毫秒），应 < ttl/3
+      interval: 10000

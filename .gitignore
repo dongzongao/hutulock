@@ -1,0 +1,27 @@
+# Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+dependency-reduced-pom.xml
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.eclipse/
+*.project
+*.classpath
+*.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Runtime
+*.pid

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.hutulock</groupId>
+        <artifactId>hutulock</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>hutulock-config</artifactId>
+    <name>HutuLock Config</name>
+    <description>
+        配置加载模块：支持 YAML、Properties、代码三种配置方式。
+        通过 ConfigProvider 接口统一抽象，实现可插拔的配置源。
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.hutulock</groupId>
+            <artifactId>hutulock-model</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+    </dependencies>
+</project>
