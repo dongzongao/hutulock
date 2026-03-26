@@ -40,6 +40,7 @@
         <module>hutulock-config</module>
         <module>hutulock-server</module>
         <module>hutulock-client</module>
+        <module>hutulock-cli</module>
     </modules>
 
     <properties>
@@ -74,6 +75,11 @@
             <dependency>
                 <groupId>com.hutulock</groupId>
                 <artifactId>hutulock-config</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.hutulock</groupId>
+                <artifactId>hutulock-client</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

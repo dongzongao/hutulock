@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.hutulock</groupId>
+        <artifactId>hutulock</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>hutulock-cli</artifactId>
+    <name>HutuLock CLI</name>
+    <description>
+        交互式命令行工具，用于连接 HutuLock 集群、管理分布式锁、查看集群状态。
+
+        支持命令：
+          connect  — 连接集群节点
+          lock     — 获取分布式锁
+          unlock   — 释放分布式锁
+          status   — 查看当前持有的锁
+          renew    — 手动续期
+          help     — 显示帮助
+          exit     — 退出
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.hutulock</groupId>
+            <artifactId>hutulock-client</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.hutulock</groupId>
+            <artifactId>hutulock-model</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.hutulock</groupId>
+            <artifactId>hutulock-config</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.hutulock.cli.HutuLockCli</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
