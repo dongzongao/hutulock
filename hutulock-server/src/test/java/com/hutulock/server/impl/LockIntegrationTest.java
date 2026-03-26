@@ -52,6 +52,9 @@ class LockIntegrationTest {
     @Test
     void singleClientAcquireAndRelease() {
         Channel mockChannel = mock(Channel.class);
+        io.netty.channel.ChannelId cid = mock(io.netty.channel.ChannelId.class);
+        when(cid.asShortText()).thenReturn("ch-single");
+        when(mockChannel.id()).thenReturn(cid);
         when(mockChannel.isActive()).thenReturn(true);
         when(mockChannel.writeAndFlush(any())).thenReturn(mock(io.netty.channel.ChannelFuture.class));
 
@@ -78,6 +81,12 @@ class LockIntegrationTest {
     void twoClientsCompeteForLock() throws InterruptedException {
         Channel ch1 = mock(Channel.class);
         Channel ch2 = mock(Channel.class);
+        io.netty.channel.ChannelId cid1 = mock(io.netty.channel.ChannelId.class);
+        io.netty.channel.ChannelId cid2 = mock(io.netty.channel.ChannelId.class);
+        when(cid1.asShortText()).thenReturn("ch-1");
+        when(cid2.asShortText()).thenReturn("ch-2");
+        when(ch1.id()).thenReturn(cid1);
+        when(ch2.id()).thenReturn(cid2);
         when(ch1.isActive()).thenReturn(true);
         when(ch2.isActive()).thenReturn(true);
         when(ch1.writeAndFlush(any())).thenReturn(mock(io.netty.channel.ChannelFuture.class));
@@ -109,6 +118,12 @@ class LockIntegrationTest {
     void sessionExpireReleasesLock() throws InterruptedException {
         Channel ch1 = mock(Channel.class);
         Channel ch2 = mock(Channel.class);
+        io.netty.channel.ChannelId cid1 = mock(io.netty.channel.ChannelId.class);
+        io.netty.channel.ChannelId cid2 = mock(io.netty.channel.ChannelId.class);
+        when(cid1.asShortText()).thenReturn("ch-expire-1");
+        when(cid2.asShortText()).thenReturn("ch-expire-2");
+        when(ch1.id()).thenReturn(cid1);
+        when(ch2.id()).thenReturn(cid2);
         when(ch1.isActive()).thenReturn(true);
         when(ch2.isActive()).thenReturn(true);
         when(ch1.writeAndFlush(any())).thenReturn(mock(io.netty.channel.ChannelFuture.class));
