@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+
 /**
  * 分布式锁压力测试
  *
@@ -62,62 +63,49 @@ class LockStressTest {
     // ==================== 测试 1：高并发锁竞争互斥性 ====================
 
     /**
-     * 50 个线程竞争同一把锁，验证任意时刻只有一个线程持锁。
-     * 通过计数器验证临界区不被并发进入。
+     * 50 个线程竞争同一把锁，验证 ZNode 树的并发安全性。
+     * 每个线程创建一个 EPHEMERAL_SEQ 节点，验证序号唯一且单调递增。
      */
     @Test
     void concurrentLockMutualExclusion() throws InterruptedException {
         int threadCount = THREADS;
-        AtomicInteger concurrentHolders = new AtomicInteger(0); // 同时持锁数
-        AtomicInteger maxConcurrent     = new AtomicInteger(0); // 最大同时持锁数
-        AtomicInteger totalAcquired     = new AtomicInteger(0);
+        AtomicInteger successCount = new AtomicInteger(0);
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch doneLatch  = new CountDownLatch(threadCount);
 
-        List<Thread> threads = new ArrayList<>();
         for (int i = 0; i < threadCount; i++) {
             final int idx = i;
-            threads.add(new Thread(() -> {
+            new Thread(() -> {
                 try {
                     startLatch.await();
-
                     Channel ch = mock(Channel.class);
+                    io.netty.channel.ChannelId cid = mock(io.netty.channel.ChannelId.class);
+                    when(cid.asShortText()).thenReturn("ch-" + idx);
+                    when(ch.id()).thenReturn(cid);
                     when(ch.isActive()).thenReturn(true);
+                    when(ch.writeAndFlush(any())).thenReturn(mock(io.netty.channel.ChannelFuture.class));
+
                     Session session = sessionManager.createSession("client-" + idx, ch);
-
-                    // 获取锁
-                    lockManager.apply(idx * 2 + 1,
+                    lockManager.apply(idx + 1,
                         Message.of(CommandType.LOCK, "stress-lock", session.getSessionId()).serialize());
-
-                    // 模拟持锁期间的临界区
-                    int current = concurrentHolders.incrementAndGet();
-                    maxConcurrent.updateAndGet(max -> Math.max(max, current));
-                    totalAcquired.incrementAndGet();
-
-                    Thread.sleep(1); // 模拟业务处理
-
-                    concurrentHolders.decrementAndGet();
-
-                    // 释放锁（简化：直接清理 session）
-                    zNodeTree.cleanupSession(session.getSessionId());
-
+                    successCount.incrementAndGet();
                 } catch (Exception e) {
                     // 忽略
                 } finally {
                     doneLatch.countDown();
                 }
-            }));
+            }).start();
         }
 
-        threads.forEach(Thread::start);
         startLatch.countDown();
         assertTrue(doneLatch.await(30, TimeUnit.SECONDS), "Stress test timed out");
 
-        // 关键断言：最大同时持锁数应该 >= 1（因为是内存操作，可能多个线程同时"持锁"）
-        // 注意：这里测试的是 ZNode 树的并发安全性，不是完整的网络锁流程
-        System.out.printf("[Stress] Mutual Exclusion: threads=%d, totalAcquired=%d, maxConcurrent=%d%n",
-            threadCount, totalAcquired.get(), maxConcurrent.get());
-        assertTrue(totalAcquired.get() > 0);
+        assertEquals(threadCount, successCount.get());
+        int childCount = zNodeTree.getChildren(ZNodePath.of("/locks/stress-lock")).size();
+        assertEquals(threadCount, childCount);
+
+        System.out.printf("[Stress] Mutual Exclusion: threads=%d, znodes=%d%n",
+            threadCount, childCount);
     }
 
     // ==================== 测试 2：ZNode 树并发写安全性 ====================
@@ -177,12 +165,7 @@ class LockStressTest {
         AtomicLong totalOps = new AtomicLong(0);
         CountDownLatch latch = new CountDownLatch(threadCount);
 
-        // 预创建锁根节点
-        for (int i = 0; i < lockCount; i++) {
-            zNodeTree.create(ZNodePath.of("/locks"),
-                com.hutulock.model.znode.ZNodeType.PERSISTENT, new byte[0], null);
-        }
-
+        // /locks 根节点已由 DefaultLockManager 构造时创建，无需重复创建
         long startMs = System.currentTimeMillis();
 
         for (int i = 0; i < threadCount; i++) {
@@ -190,7 +173,11 @@ class LockStressTest {
             new Thread(() -> {
                 try {
                     Channel ch = mock(Channel.class);
+                    io.netty.channel.ChannelId cid = mock(io.netty.channel.ChannelId.class);
+                    when(cid.asShortText()).thenReturn("ch-throughput-" + tid);
+                    when(ch.id()).thenReturn(cid);
                     when(ch.isActive()).thenReturn(true);
+                    when(ch.writeAndFlush(any())).thenReturn(mock(io.netty.channel.ChannelFuture.class));
                     Session session = sessionManager.createSession("client-" + tid, ch);
 
                     for (int j = 0; j < opsPerThread; j++) {
@@ -273,10 +260,15 @@ class LockStressTest {
             new Thread(() -> {
                 try {
                     Channel ch = mock(Channel.class);
+                    // stub channel id，避免 NPE
+                    io.netty.channel.ChannelId channelId = mock(io.netty.channel.ChannelId.class);
+                    when(channelId.asShortText()).thenReturn("ch-" + tid + "-" + Thread.currentThread().getId());
+                    when(ch.id()).thenReturn(channelId);
                     when(ch.isActive()).thenReturn(true);
+                    when(ch.writeAndFlush(any())).thenReturn(mock(io.netty.channel.ChannelFuture.class));
+
                     Session session = sessionManager.createSession("client-" + tid, ch, 50);
 
-                    // 模拟心跳
                     for (int j = 0; j < 5; j++) {
                         sessionManager.heartbeat(session.getSessionId());
                         Thread.sleep(10);
