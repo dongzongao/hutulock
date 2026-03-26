@@ -16,6 +16,7 @@ import com.hutulock.spi.event.SessionEvent;
 import com.hutulock.spi.metrics.MetricsCollector;
 import com.hutulock.spi.session.SessionTracker;
 import com.hutulock.spi.storage.ZNodeStorage;
+import com.hutulock.server.ioc.Lifecycle;
 import io.netty.channel.Channel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,7 +30,7 @@ import java.util.concurrent.*;
  * @author HutuLock Authors
  * @since 1.0.0
  */
-public class DefaultSessionManager implements SessionTracker {
+public class DefaultSessionManager implements SessionTracker, Lifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultSessionManager.class);
 

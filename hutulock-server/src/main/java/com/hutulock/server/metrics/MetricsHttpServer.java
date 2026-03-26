@@ -7,6 +7,7 @@
 package com.hutulock.server.metrics;
 
 import com.sun.net.httpserver.HttpServer;
+import com.hutulock.server.ioc.Lifecycle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,7 +37,7 @@ import java.util.concurrent.Executors;
  * @author HutuLock Authors
  * @since 1.0.0
  */
-public class MetricsHttpServer {
+public class MetricsHttpServer implements Lifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(MetricsHttpServer.class);
 
@@ -107,5 +108,11 @@ public class MetricsHttpServer {
             server.stop(0);
             log.info("Metrics HTTP server stopped");
         }
+    }
+
+    /** {@link com.hutulock.server.ioc.Lifecycle} 关闭钩子，委托给 {@link #stop()}。 */
+    @Override
+    public void shutdown() {
+        stop();
     }
 }

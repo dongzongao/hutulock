@@ -11,6 +11,7 @@ import com.hutulock.spi.event.RaftEvent;
 import com.hutulock.spi.metrics.MetricsCollector;
 import com.hutulock.config.api.ServerProperties;
 import com.hutulock.server.api.RaftStateMachine;
+import com.hutulock.server.ioc.Lifecycle;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -56,7 +57,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @author HutuLock Authors
  * @since 1.0.0
  */
-public class RaftNode {
+public class RaftNode implements Lifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(RaftNode.class);
 
@@ -429,4 +430,12 @@ public class RaftNode {
     public String  getLeaderId() { return leaderId;   }
     public boolean isLeader()    { return role == Role.LEADER; }
     public ScheduledExecutorService getScheduler() { return scheduler; }
+
+    /** {@link com.hutulock.server.ioc.Lifecycle} 关闭钩子。 */
+    @Override
+    public void shutdown() {
+        scheduler.shutdownNow();
+        raftGroup.shutdownGracefully();
+        log.info("RaftNode [{}] shutdown", nodeId);
+    }
 }
