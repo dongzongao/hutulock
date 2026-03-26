@@ -1,0 +1,86 @@
+/*
+ * Copyright 2024 HutuLock Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ */
+package com.hutulock.server.mem;
+
+import com.hutulock.model.znode.ZNodePath;
+
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * ZNodePath 路径缓存（String intern 模式）
+ *
+ * <p>锁路径高度重复（如 {@code /locks/order-lock/seq-0000000001}），
+ * 每次 {@link ZNodePath#of(String)} 都会 new 一个新对象。
+ * 通过缓存已创建的路径对象，消除重复分配。
+ *
+ * <p>缓存策略：
+ * <ul>
+ *   <li>PERSISTENT 路径（锁根节点）：永久缓存，数量有限</li>
+ *   <li>EPHEMERAL_SEQ 路径（顺序节点）：节点删除时主动 evict</li>
+ *   <li>超过容量上限时不缓存（降级为直接 new）</li>
+ * </ul>
+ *
+ * <p>顺序节点路径格式预计算：
+ * {@code /locks/{lockName}/seq-} + {@link #formatSeq(int)} 避免 {@code String.format}。
+ *
+ * @author HutuLock Authors
+ * @since 1.0.0
+ */
+public final class ZNodePathCache {
+
+    /** 最大缓存条目数，超出后不缓存（防止内存泄漏） */
+    private static final int MAX_SIZE = 8192;
+
+    /** 预计算的 10 位补零序号字符串，覆盖 0 ~ 99999 */
+    private static final int   PRECOMPUTED_LIMIT = 100_000;
+    private static final String[] SEQ_STRINGS    = new String[PRECOMPUTED_LIMIT];
+
+    static {
+        for (int i = 0; i < PRECOMPUTED_LIMIT; i++) {
+            SEQ_STRINGS[i] = String.format("%010d", i);
+        }
+    }
+
+    private final ConcurrentHashMap<String, ZNodePath> cache = new ConcurrentHashMap<>();
+
+    /**
+     * 获取或创建 ZNodePath，优先从缓存返回。
+     */
+    public ZNodePath get(String pathStr) {
+        ZNodePath cached = cache.get(pathStr);
+        if (cached != null) return cached;
+        if (cache.size() >= MAX_SIZE) return ZNodePath.of(pathStr); // 降级
+        return cache.computeIfAbsent(pathStr, ZNodePath::of);
+    }
+
+    /**
+     * 构造顺序节点路径，使用预计算序号字符串避免 String.format。
+     *
+     * @param prefix  路径前缀，如 {@code /locks/order-lock/seq-}
+     * @param seqNum  序号（1-based）
+     */
+    public ZNodePath getSeqPath(String prefix, int seqNum) {
+        String seq = seqNum < PRECOMPUTED_LIMIT ? SEQ_STRINGS[seqNum] : String.format("%010d", seqNum);
+        return get(prefix + seq);
+    }
+
+    /**
+     * 主动移除缓存条目（节点删除时调用，防止内存泄漏）。
+     */
+    public void evict(String pathStr) {
+        cache.remove(pathStr);
+    }
+
+    /**
+     * 格式化序号为 10 位补零字符串（静态工具方法）。
+     */
+    public static String formatSeq(int seqNum) {
+        return seqNum < PRECOMPUTED_LIMIT ? SEQ_STRINGS[seqNum] : String.format("%010d", seqNum);
+    }
+
+    public int size() { return cache.size(); }
+}

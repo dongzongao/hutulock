@@ -6,14 +6,14 @@ import com.hutulock.model.protocol.Message;
 import com.hutulock.model.session.Session;
 import com.hutulock.model.znode.ZNodePath;
 import com.hutulock.server.impl.*;
+import com.hutulock.server.mem.MemoryManager;
 import com.hutulock.spi.event.EventBus;
 import com.hutulock.spi.metrics.MetricsCollector;
 import io.netty.channel.Channel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -53,7 +53,8 @@ class LockStressTest {
             .build();
 
         DefaultWatcherRegistry watcherRegistry = new DefaultWatcherRegistry(MetricsCollector.noop());
-        zNodeTree      = new DefaultZNodeTree(watcherRegistry, MetricsCollector.noop(), EventBus.noop());
+        zNodeTree      = new DefaultZNodeTree(watcherRegistry, MetricsCollector.noop(),
+            EventBus.noop(), new MemoryManager());
         sessionManager = new DefaultSessionManager(zNodeTree, MetricsCollector.noop(),
             EventBus.noop(), props);
         lockManager    = new DefaultLockManager(zNodeTree, sessionManager,
@@ -152,20 +153,21 @@ class LockStressTest {
             threadCount, threadCount * opsPerThread, errors.get());
     }
 
-    // ==================== 测试 3：多锁并发吞吐量 ====================
+    // ==================== 测试 3：多锁并发吞吐量 + P99 延迟 ====================
 
     /**
-     * N 个线程竞争 M 把不同的锁，测量吞吐量（ops/sec）。
+     * N 个线程竞争 M 把不同的锁，测量吞吐量（ops/sec）和 P50/P99 延迟。
      */
     @Test
     void multiLockThroughput() throws InterruptedException {
-        int threadCount = THREADS;
-        int lockCount   = LOCK_COUNT;
+        int threadCount  = THREADS;
+        int lockCount    = LOCK_COUNT;
         int opsPerThread = ITERATIONS;
         AtomicLong totalOps = new AtomicLong(0);
+        // 用于收集每次操作耗时（ns）
+        ConcurrentLinkedQueue<Long> latencies = new ConcurrentLinkedQueue<>();
         CountDownLatch latch = new CountDownLatch(threadCount);
 
-        // /locks 根节点已由 DefaultLockManager 构造时创建，无需重复创建
         long startMs = System.currentTimeMillis();
 
         for (int i = 0; i < threadCount; i++) {
@@ -182,8 +184,10 @@ class LockStressTest {
 
                     for (int j = 0; j < opsPerThread; j++) {
                         String lockName = "lock-" + (j % lockCount);
+                        long t0 = System.nanoTime();
                         lockManager.apply(tid * opsPerThread + j,
                             Message.of(CommandType.LOCK, lockName, session.getSessionId()).serialize());
+                        latencies.add(System.nanoTime() - t0);
                         totalOps.incrementAndGet();
                     }
                 } catch (Exception e) {
@@ -198,11 +202,75 @@ class LockStressTest {
         long elapsed = System.currentTimeMillis() - startMs;
         double opsPerSec = totalOps.get() * 1000.0 / elapsed;
 
+        // 计算 P50 / P99 延迟
+        long[] sorted = latencies.stream().mapToLong(Long::longValue).sorted().toArray();
+        long p50Us = sorted.length > 0 ? sorted[(int)(sorted.length * 0.50)] / 1000 : 0;
+        long p99Us = sorted.length > 0 ? sorted[(int)(sorted.length * 0.99)] / 1000 : 0;
+        long maxUs = sorted.length > 0 ? sorted[sorted.length - 1] / 1000 : 0;
+
         System.out.printf("[Stress] Multi-Lock Throughput: threads=%d, locks=%d, " +
             "totalOps=%d, elapsed=%dms, throughput=%.0f ops/sec%n",
             threadCount, lockCount, totalOps.get(), elapsed, opsPerSec);
+        System.out.printf("[Stress] Latency: P50=%dμs  P99=%dμs  Max=%dμs%n",
+            p50Us, p99Us, maxUs);
 
         assertTrue(opsPerSec > 1000, "Throughput too low: " + opsPerSec + " ops/sec");
+    }
+
+    // ==================== 测试 3b：P99 延迟专项（内存优化验证）====================
+
+    /**
+     * 专项测试：单锁高并发，测量 apply() 的 P99 延迟。
+     * 验证路径缓存 + 序号预计算对 P99 的改善效果。
+     */
+    @Test
+    void p99LockLatency() throws InterruptedException {
+        int threadCount  = 20;
+        int opsPerThread = 500;
+        ConcurrentLinkedQueue<Long> latencies = new ConcurrentLinkedQueue<>();
+        CountDownLatch latch = new CountDownLatch(threadCount);
+
+        for (int i = 0; i < threadCount; i++) {
+            final int tid = i;
+            new Thread(() -> {
+                try {
+                    Channel ch = mock(Channel.class);
+                    io.netty.channel.ChannelId cid = mock(io.netty.channel.ChannelId.class);
+                    when(cid.asShortText()).thenReturn("ch-p99-" + tid);
+                    when(ch.id()).thenReturn(cid);
+                    when(ch.isActive()).thenReturn(true);
+                    when(ch.writeAndFlush(any())).thenReturn(mock(io.netty.channel.ChannelFuture.class));
+                    Session session = sessionManager.createSession("p99-client-" + tid, ch);
+
+                    for (int j = 0; j < opsPerThread; j++) {
+                        long t0 = System.nanoTime();
+                        lockManager.apply(tid * opsPerThread + j,
+                            Message.of(CommandType.LOCK, "p99-lock", session.getSessionId()).serialize());
+                        latencies.add(System.nanoTime() - t0);
+                    }
+                } catch (Exception e) {
+                    // 忽略
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
+        }
+
+        assertTrue(latch.await(30, TimeUnit.SECONDS));
+
+        long[] sorted = latencies.stream().mapToLong(Long::longValue).sorted().toArray();
+        long p50Us  = sorted[(int)(sorted.length * 0.50)] / 1000;
+        long p95Us  = sorted[(int)(sorted.length * 0.95)] / 1000;
+        long p99Us  = sorted[(int)(sorted.length * 0.99)] / 1000;
+        long p999Us = sorted[(int)(sorted.length * 0.999)] / 1000;
+        long maxUs  = sorted[sorted.length - 1] / 1000;
+
+        System.out.printf("[P99] Lock latency (threads=%d, ops=%d):%n", threadCount, sorted.length);
+        System.out.printf("      P50=%dμs  P95=%dμs  P99=%dμs  P99.9=%dμs  Max=%dμs%n",
+            p50Us, p95Us, p99Us, p999Us, maxUs);
+
+        // P99 应在 5ms 以内（纯内存操作，无网络）
+        assertTrue(p99Us < 5_000, "P99 too high: " + p99Us + "μs (expected < 5000μs)");
     }
 
     // ==================== 测试 4：事件总线吞吐量 ====================

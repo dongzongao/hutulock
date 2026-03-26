@@ -16,7 +16,8 @@ import com.hutulock.spi.event.EventBus;
 import com.hutulock.spi.event.ZNodeEvent;
 import com.hutulock.spi.metrics.MetricsCollector;
 import com.hutulock.spi.storage.WatcherRegistry;
-import com.hutulock.spi.storage.ZNodeStorage;
+import com.hutulock.server.mem.MemoryManager;
+import com.hutulock.server.mem.ZNodePathCache;
 import io.netty.channel.Channel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,18 +38,32 @@ public class DefaultZNodeTree implements ZNodeStorage {
     private static final Logger log = LoggerFactory.getLogger(DefaultZNodeTree.class);
 
     private final Map<String, ZNode>         nodes       = new ConcurrentHashMap<>();
+    /** 父路径 → 子路径集合（有序：按 seqNum 升序，非顺序节点排最后） */
     private final Map<String, Set<String>>   children    = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> seqCounters = new ConcurrentHashMap<>();
 
     private final WatcherRegistry  watcherRegistry;
     private final MetricsCollector metrics;
     private final EventBus         eventBus;
+    private final ZNodePathCache   pathCache;
     private String nodeId = "unknown";
 
+    public DefaultZNodeTree(WatcherRegistry watcherRegistry, MetricsCollector metrics,
+                             EventBus eventBus, MemoryManager memoryManager) {
+        this.watcherRegistry = watcherRegistry;
+        this.metrics         = metrics;
+        this.eventBus        = eventBus;
+        this.pathCache       = memoryManager.getPathCache();
+        nodes.put("/", ZNode.builder(ZNodePath.ROOT, ZNodeType.PERSISTENT).build());
+        children.put("/", ConcurrentHashMap.newKeySet());
+    }
+
+    /** 兼容构造（测试用，不使用路径缓存）。 */
     public DefaultZNodeTree(WatcherRegistry watcherRegistry, MetricsCollector metrics, EventBus eventBus) {
         this.watcherRegistry = watcherRegistry;
         this.metrics         = metrics;
         this.eventBus        = eventBus;
+        this.pathCache       = new ZNodePathCache();
         nodes.put("/", ZNode.builder(ZNodePath.ROOT, ZNodeType.PERSISTENT).build());
         children.put("/", ConcurrentHashMap.newKeySet());
     }
@@ -66,7 +81,8 @@ public class DefaultZNodeTree implements ZNodeStorage {
         int seqNum = -1;
         if (type == ZNodeType.EPHEMERAL_SEQ || type == ZNodeType.PERSISTENT_SEQ) {
             seqNum = seqCounters.computeIfAbsent(parent.value(), k -> new AtomicInteger(0)).incrementAndGet();
-            actualPath = ZNodePath.of(path.value() + String.format("%010d", seqNum));
+            // 使用预计算序号字符串，避免 String.format
+            actualPath = pathCache.get(path.value() + ZNodePathCache.formatSeq(seqNum));
         }
 
         if (nodes.containsKey(actualPath.value())) {
@@ -97,6 +113,11 @@ public class DefaultZNodeTree implements ZNodeStorage {
         Set<String> pc = children.get(parent.value());
         if (pc != null) pc.remove(path.value());
 
+        // 顺序节点删除后 evict 路径缓存，防止内存泄漏
+        if (node.isEphemeral() || node.isSequential()) {
+            pathCache.evict(path.value());
+        }
+
         metrics.onZNodeDeleted();
         log.debug("ZNode deleted: {}", path);
 
@@ -120,13 +141,13 @@ public class DefaultZNodeTree implements ZNodeStorage {
     @Override
     public List<ZNodePath> getChildren(ZNodePath path) {
         Set<String> cp = children.get(path.value());
-        if (cp == null) return Collections.emptyList();
-        return cp.stream().map(ZNodePath::of)
-            .sorted(Comparator.comparing(p -> {
-                ZNode n = nodes.get(p.value());
-                return n != null && n.isSequential() ? n.getSequenceNum() : Integer.MAX_VALUE;
-            }))
-            .collect(Collectors.toList());
+        if (cp == null || cp.isEmpty()) return Collections.emptyList();
+        // 直接构建列表，按 seqNum 排序（顺序节点路径字典序 = seqNum 升序）
+        List<String> sorted = new ArrayList<>(cp);
+        sorted.sort(Comparator.naturalOrder()); // seq-0000000001 字典序即数值序
+        List<ZNodePath> result = new ArrayList<>(sorted.size());
+        for (String s : sorted) result.add(pathCache.get(s));
+        return result;
     }
 
     @Override

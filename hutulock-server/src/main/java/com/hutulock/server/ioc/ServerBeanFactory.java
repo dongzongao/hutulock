@@ -84,6 +84,10 @@ public final class ServerBeanFactory {
         ctx.register(BeanDefinition.of("serverProperties", ServerProperties.class,
                 () -> config.getServerProperties()));
 
+        // ---- 1b. 内存管理器（路径缓存 + 对象池）----
+        ctx.register(BeanDefinition.of("memoryManager", com.hutulock.server.mem.MemoryManager.class,
+                () -> new com.hutulock.server.mem.MemoryManager()));
+
         // ---- 2. 事件总线 ----
         ctx.register(BeanDefinition.of("eventBus", EventBus.class, () -> {
             DefaultEventBus bus = new DefaultEventBus();
@@ -118,7 +122,8 @@ public final class ServerBeanFactory {
             DefaultZNodeTree tree = new DefaultZNodeTree(
                     ctx.getBean(WatcherRegistry.class),
                     ctx.getBean(MetricsCollector.class),
-                    ctx.getBean(EventBus.class));
+                    ctx.getBean(EventBus.class),
+                    ctx.getBean(com.hutulock.server.mem.MemoryManager.class));
             tree.setNodeId(nodeId);
             ProxyBuilder<ZNodeStorage> builder = ProxyBuilder.wrap(ZNodeStorage.class, tree);
             if (proxyEnabled("logging")) builder.withLogging();
