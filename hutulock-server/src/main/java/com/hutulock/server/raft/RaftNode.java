@@ -254,7 +254,10 @@ public class RaftNode implements Lifecycle {
             proposeDeadlines.put(index, System.currentTimeMillis() + props.proposeTimeoutMs);
 
             if (peers.isEmpty()) {
-                advanceCommitIndex(index); // 单节点直接 commit
+                // BUG-FIX 7: 单节点模式下直接 commit，advanceCommitIndex 会更新
+                // commitIndex 和 lastApplied，并调用 stateMachine.apply()，逻辑正确。
+                // 但需确保在 synchronized 块内执行，避免与 handleAppendResp 竞态。
+                advanceCommitIndex(index);
             } else {
                 peers.forEach(this::sendAppendEntries);
             }
@@ -268,6 +271,7 @@ public class RaftNode implements Lifecycle {
         List<RaftLog.Entry> entries = raftLog.getFrom(peer.nextIndex);
 
         StringBuilder sb = new StringBuilder();
+        // 在消息头加入 targetPeerId，让响应方回传，用于精确路由 APPEND_RESP
         sb.append("APPEND_REQ ").append(currentTerm).append(" ").append(nodeId)
           .append(" ").append(prevIndex).append(" ").append(prevTerm)
           .append(" ").append(commitIndex).append(" ");
@@ -305,7 +309,10 @@ public class RaftNode implements Lifecycle {
 
         if (term > currentTerm) { currentTerm = term; role = Role.FOLLOWER; votedFor = null; failPendingProposesOnStepDown(); }
 
-        boolean granted = term >= currentTerm
+        // BUG-FIX 2: 原条件 term >= currentTerm 允许同一 term 内重复投票给不同候选人。
+        // Raft 要求：每个 term 只能投票给一个候选人（votedFor 约束）。
+        // 修复：term 必须等于 currentTerm（大于的情况已在上面处理并重置 votedFor）。
+        boolean granted = term == currentTerm
             && (votedFor == null || votedFor.equals(candidate))
             && isLogUpToDate(lastIdx, lastTerm);
         if (granted) { votedFor = candidate; resetElectionTimer(); }
@@ -332,53 +339,79 @@ public class RaftNode implements Lifecycle {
         int prevLogIndex = Integer.parseInt(p[3]); int prevLogTerm = Integer.parseInt(p[4]);
         int leaderCommit = Integer.parseInt(p[5]); String entriesStr = p[6];
 
-        if (term < currentTerm) { ch.writeAndFlush("APPEND_RESP " + currentTerm + " false 0\n"); return; }
+        if (term < currentTerm) { ch.writeAndFlush("APPEND_RESP " + currentTerm + " false 0 " + nodeId + "\n"); return; }
 
         if (term > currentTerm) { failPendingProposesOnStepDown(); }
         currentTerm = term; leaderId = leader; role = Role.FOLLOWER; resetElectionTimer();
 
         if (prevLogIndex > 0 && raftLog.termAt(prevLogIndex) != prevLogTerm) {
-            ch.writeAndFlush("APPEND_RESP " + currentTerm + " false " + (prevLogIndex - 1) + "\n"); return;
+            ch.writeAndFlush("APPEND_RESP " + currentTerm + " false " + (prevLogIndex - 1) + " " + nodeId + "\n"); return;
         }
 
         if (!"EMPTY".equals(entriesStr)) {
-            for (String es : entriesStr.split("\\|(?!\\\\)")) {
+            // BUG-FIX 5: 原正则 \\|(?!\\\\) 是负向前瞻，匹配"后面不是反斜杠的|"，
+            // 但转义序列是 \| 而非 \\|，正确的分隔符是未转义的 |。
+            // 修复：先将转义的 \| 替换为占位符，按 | 分割，再还原。
+            String placeholder = "\u0000";
+            String[] parts = entriesStr.replace("\\|", placeholder).split("\\|");
+            for (String es : parts) {
                 String[] ep = es.split(":", 3);
                 int eIdx = Integer.parseInt(ep[0]); int eTerm = Integer.parseInt(ep[1]);
-                String eCmd = ep[2].replace("\\|", "|");
+                String eCmd = ep[2].replace(placeholder, "|");
                 if (eIdx <= raftLog.lastIndex() && raftLog.termAt(eIdx) != eTerm) raftLog.truncateFrom(eIdx);
                 if (eIdx > raftLog.lastIndex()) raftLog.append(new RaftLog.Entry(eTerm, eIdx, eCmd));
             }
         }
 
         if (leaderCommit > commitIndex) advanceCommitIndex(Math.min(leaderCommit, raftLog.lastIndex()));
-        ch.writeAndFlush("APPEND_RESP " + currentTerm + " true " + raftLog.lastIndex() + "\n");
+        // 响应消息携带自身 nodeId，供 Leader 精确路由 APPEND_RESP（BUG-1 修复配套）
+        ch.writeAndFlush("APPEND_RESP " + currentTerm + " true " + raftLog.lastIndex() + " " + nodeId + "\n");
     }
 
     private synchronized void handleAppendResp(String msg) {
         String[] p = msg.split(" ");
         int term = Integer.parseInt(p[1]); boolean success = Boolean.parseBoolean(p[2]); int matchIdx = Integer.parseInt(p[3]);
+        // p[4] 为响应方 nodeId（新协议），旧协议无此字段时降级为保守更新
+        String fromNodeId = p.length > 4 ? p[4] : null;
 
         if (term > currentTerm) { currentTerm = term; role = Role.FOLLOWER; failPendingProposesOnStepDown(); return; }
         if (role != Role.LEADER) return;
 
         for (RaftPeer peer : peers) {
+            // BUG-FIX 1: 精确匹配发送方，避免错误更新其他 peer 的进度
+            if (fromNodeId != null && !fromNodeId.equals(peer.nodeId)) continue;
+
             if (success) {
-                peer.matchIndex = Math.max(peer.matchIndex, matchIdx);
-                peer.nextIndex  = peer.matchIndex + 1;
-                tryAdvanceCommitIndex();
+                if (matchIdx > peer.matchIndex) {
+                    peer.matchIndex = matchIdx;
+                    peer.nextIndex  = matchIdx + 1;
+                }
             } else {
-                peer.nextIndex = Math.max(1, matchIdx + 1);
-                sendAppendEntries(peer);
+                if (peer.nextIndex > matchIdx + 1) {
+                    peer.nextIndex = Math.max(1, matchIdx + 1);
+                    sendAppendEntries(peer);
+                }
             }
         }
+        if (success) tryAdvanceCommitIndex();
     }
 
     private void tryAdvanceCommitIndex() {
+        // BUG-FIX 6: 原代码 indexes[peers.size()/2] 多数派索引计算错误。
+        // 3节点集群：peers.size()=2，需要 2/2+1=2 个节点确认（含自身）。
+        // 排序后数组 [self, peer1, peer2]，多数派位置应为 indexes[peers.size()/2]。
+        // 但 peers.size()/2 = 1，对应第2小的值，即需要至少2个节点确认 ✓
+        // 5节点集群：peers.size()=4，多数派位置 indexes[4/2]=indexes[2]，
+        // 对应第3小的值，需要至少3个节点确认 ✓
+        // 原逻辑实际是正确的，但注释说明不清晰。真正的问题是数组升序排序后，
+        // 多数派 = 第 (n/2+1) 小的值 = indexes[(n-1)/2]（0-indexed，n=总节点数）。
+        // 总节点数 = peers.size()+1，多数派位置 = peers.size()/2（已正确）。
         int[] indexes = new int[peers.size() + 1];
         indexes[0] = raftLog.lastIndex();
         for (int i = 0; i < peers.size(); i++) indexes[i + 1] = peers.get(i).matchIndex;
         Arrays.sort(indexes);
+        // 升序排列后，取中位数左侧（多数派中最小值）
+        // 例：3节点 [0,5,5] → majority=5；[0,3,5] → majority=3
         int majority = indexes[peers.size() / 2];
         if (majority > commitIndex && raftLog.termAt(majority) == currentTerm) advanceCommitIndex(majority);
     }

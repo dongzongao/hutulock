@@ -176,7 +176,11 @@ public class DefaultLockManager implements LockService, RaftStateMachine {
         }
     }
 
-    public void recheckLock(String lockName, String mySeqPath, String sessionId) {
+    // BUG-FIX 4: recheckLock 与 apply(synchronized) 存在竞态。
+    // 场景：apply 正在删除 seq-1（unlock），recheckLock 同时读 getChildren，
+    // 可能看到 seq-1 仍存在，错误地认为 seq-2 不是最小节点。
+    // 修复：加 synchronized，与 apply() 互斥。
+    public synchronized void recheckLock(String lockName, String mySeqPath, String sessionId) {
         ZNodePath lockRoot = ZNodePath.of(LOCKS_ROOT + "/" + lockName);
         ZNodePath myPath   = ZNodePath.of(mySeqPath);
         Channel   channel  = sessionTracker.getChannel(sessionId);

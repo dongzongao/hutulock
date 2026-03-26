@@ -130,7 +130,11 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
     // ==================== 读操作（本地处理） ====================
 
     private void handleRecheck(ChannelHandlerContext ctx, Message msg) {
-        // RECHECK lockName seqNodePath sessionId
+        // BUG-FIX 3: RECHECK 是客户端收到 WATCH_EVENT 后重新检查锁顺序的操作。
+        // 它只读取 ZNode 树（getChildren），不修改状态，因此不需要走 Raft。
+        // 但必须保证与 apply() 的互斥：recheckLock 已加 synchronized，安全。
+        // 注意：Follower 节点的 ZNode 树可能落后于 Leader，
+        // 客户端应只连接 Leader（通过 REDIRECT 保证），所以这里是安全的。
         lockManager.recheckLock(msg.arg(0), msg.arg(1), msg.arg(2));
     }
 
