@@ -26,3 +26,8 @@ logs/
 
 # Runtime
 *.pid
+
+# Code analysis
+qodana.sarif.json
+qodana.yaml
+.qodana/
