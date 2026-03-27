@@ -1,0 +1,23 @@
+{
+    "name": "hutulock/hutulock-php",
+    "description": "HutuLock distributed lock PHP SDK",
+    "type": "library",
+    "license": "Apache-2.0",
+    "require": {
+        "php": ">=8.0",
+        "ext-sockets": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10"
+    },
+    "autoload": {
+        "psr-4": {
+            "HutuLock\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "HutuLock\\Tests\\": "tests/"
+        }
+    }
+}
