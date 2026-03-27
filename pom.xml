@@ -27,6 +27,14 @@
     <description>High-availability distributed lock based on Raft consensus and ZooKeeper design patterns</description>
     <url>https://github.com/hutulock/hutulock</url>
 
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub HutuLock Apache Maven Packages</name>
+            <url>https://maven.pkg.github.com/hutulock/hutulock</url>
+        </repository>
+    </distributionManagement>
+
     <licenses>
         <license>
             <name>Apache License 2.0</name>
@@ -42,6 +50,7 @@
         <module>hutulock-server</module>
         <module>hutulock-client</module>
         <module>hutulock-cli</module>
+        <module>hutulock-admin</module>
     </modules>
 
     <properties>
@@ -86,6 +95,12 @@
             <dependency>
                 <groupId>com.hutulock</groupId>
                 <artifactId>hutulock-proxy</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.hutulock</groupId>
+                <artifactId>hutulock-admin</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
