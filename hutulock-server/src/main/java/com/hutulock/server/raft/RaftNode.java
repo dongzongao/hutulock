@@ -123,9 +123,11 @@ public class RaftNode implements Lifecycle {
         this.eventBus     = eventBus;
     }
 
-    /** 添加集群节点。 */
+    /** 添加集群节点并立即发起连接。 */
     public void addPeer(String peerId, String host, int port) {
-        peers.add(new RaftPeer(peerId, host, port, this, raftGroup));
+        RaftPeer peer = new RaftPeer(peerId, host, port, this, raftGroup);
+        peers.add(peer);
+        peer.connect();
     }
 
     /**
@@ -135,7 +137,6 @@ public class RaftNode implements Lifecycle {
      */
     public void start() throws InterruptedException {
         startRaftServer();
-        scheduler.schedule(this::connectPeers, 1, TimeUnit.SECONDS);
         resetElectionTimer();
         scheduler.scheduleAtFixedRate(this::cleanupTimedOutProposes, 1, 1, TimeUnit.SECONDS);
         log.info("Raft node [{}] started on port {}", nodeId, raftPort);
@@ -162,6 +163,12 @@ public class RaftNode implements Lifecycle {
 
         // 发布选举开始事件
         eventBus.publish(RaftEvent.builder(RaftEvent.Type.ELECTION_STARTED, nodeId, currentTerm).build());
+
+        // 单节点集群：无需等待投票响应，直接成为 Leader
+        if (peers.isEmpty()) {
+            becomeLeader();
+            return;
+        }
 
         String req = String.format("VOTE_REQ %d %s %d %d",
             currentTerm, nodeId, raftLog.lastIndex(), raftLog.lastTerm());
