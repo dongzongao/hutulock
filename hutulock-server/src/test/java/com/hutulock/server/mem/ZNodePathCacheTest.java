@@ -95,7 +95,7 @@ class ZNodePathCacheTest {
         ZNodePath second = cache.get("/locks/seq-node");
         // 重新创建，可能是不同实例（取决于 ZNodePath.of 实现）
         assertNotNull(second);
-        assertEquals("/locks/seq-node", second.getPath());
+        assertEquals("/locks/seq-node", second.value());
     }
 
     @Test

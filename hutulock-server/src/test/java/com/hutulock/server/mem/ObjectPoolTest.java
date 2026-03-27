@@ -150,16 +150,11 @@ class ObjectPoolTest {
 
     @Test
     void stats_newAllocRateIsAccurate() {
-        // 新建一个空池（容量 0 预热），所有 borrow 都应触发 new
-        ObjectPool<Item> emptyPool = new ObjectPool<>(0, Item::new) {
-            // 覆盖预热：容量 0 时 global 为空，borrow 直接 new
-        };
-        // 实际上构造函数预热 capacity/2 = 0 个，全局池为空
-        // 但 ThreadLocal 本地池也为空，所以第一次 borrow 走 new
+        // 新建一个容量为 0 的池，全局池为空，第一次 borrow 直接 new
+        ObjectPool<Item> emptyPool = new ObjectPool<>(0, Item::new);
         Item item = emptyPool.borrow();
         assertNotNull(item);
-        // newAllocRate 应 > 0
-        assertTrue(emptyPool.newAllocRate() > 0.0 || emptyPool.getBorrowCount() > 0);
+        assertTrue(emptyPool.newAllocRate() > 0.0, "容量为 0 的池 borrow 应触发 new，newAllocRate 应 > 0");
     }
 
     @Test

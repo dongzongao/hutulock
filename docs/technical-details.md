@@ -138,6 +138,54 @@ APPEND_RESP {term} {success} {matchIndex} {nodeId} {conflictTerm} {conflictIndex
 - 读操作（`get/getFrom/termAt/lastIndex/lastTerm`）：共享锁，多 Follower 并发读不互斥
 - 写操作（`append/truncateFrom`）：独占锁
 
+### WAL 持久化
+
+`RaftLog` 支持两种模式：
+
+| 模式 | 构造方式 | 用途 |
+|------|---------|------|
+| 内存模式 | `new RaftLog()` | 测试 |
+| WAL 模式 | `new RaftLog(dataDir)` | 生产 |
+
+**WAL 格式（`raft-log.wal`，每行一条）：**
+```
+{index}\t{term}\t{command}
+```
+command 中的 TAB → `\t`，换行 → `\n`，反斜杠 → `\\`。
+
+**写入策略：**
+- `append`：追加写 + `channel.force(false)` fsync data
+- `truncateFrom`：重写整个文件 + fsync + fsync 目录（确保 rename 持久化）
+
+**崩溃恢复：**
+- 启动时校验 index 连续性，遇到跳跃截断并 warn
+- 加载快照 → 重放快照点之后的 WAL 增量日志
+
+**元数据持久化（`RaftMetaStore`）：**
+- `currentTerm/votedFor` 写临时文件 → `SYNC` → rename → fsync 目录（原子替换）
+
+### 动态成员变更（Joint Consensus）
+
+两阶段流程（Raft §6）：
+
+```
+Phase 1: propose C_old,new（JOINT）
+  → 复制到多数派（需 C_old 和 C_new 各自多数派同意）
+  → apply：更新 clusterConfig 为 JOINT
+
+Phase 2: Leader 自动 propose C_new（NORMAL）
+  → 复制到多数派
+  → apply：更新 clusterConfig 为 NORMAL，清理旧 peer 连接
+  → 若 Leader 不在 C_new 中，主动降级
+```
+
+**JOINT 阶段 quorum 计算：**
+```java
+// 需要 C_old 和 C_new 各自的多数派都满足
+boolean hasQuorum = countQuorum(selfId, oldMembers, matchCounts, threshold)
+                 && countQuorum(selfId, newMembers, matchCounts, threshold);
+```
+
 ### propose 超时管理
 
 使用 `DelayQueue<ProposeDeadline>` 替代全量 Map 扫描：
@@ -458,29 +506,42 @@ release()
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    hutulock-server                       │
-│                                                          │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │  ioc/  ApplicationContext  ServerBeanFactory     │    │
-│  │        BeanDefinition      Lifecycle             │    │
-│  └─────────────────────────────────────────────────┘    │
-│                                                          │
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │  ioc/  ApplicationContext  ServerBeanFactory     │   │
+│  │        BeanDefinition      Lifecycle             │   │
+│  └─────────────────────────────────────────────────┘   │
+│                                                         │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐  │
 │  │ RaftNode │  │LockMgr   │  │SessionMgr│  │ZNode   │  │
 │  │ Election │  │(Default) │  │(Default) │  │Tree    │  │
 │  │ Replicat.│  │          │  │          │  │        │  │
+│  │ WAL/Snap │  │          │  │          │  │        │  │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └───┬────┘  │
-│       │              │              │             │       │
+│       │              │              │             │      │
 │  ┌────▼─────────────▼──────────────▼─────────────▼────┐ │
 │  │              hutulock-spi                           │ │
 │  │  LockService  SessionTracker  ZNodeStorage          │ │
 │  │  MetricsCollector  EventBus  WatcherRegistry        │ │
 │  │  Authenticator  Authorizer  AuditLogger             │ │
 │  └─────────────────────┬───────────────────────────────┘ │
-│                         │                                 │
-│  ┌──────────────────────▼───────────────────────────────┐ │
-│  │                 hutulock-model                        │ │
-│  │  ZNode(czxid/mzxid)  ZNodePath  Session              │ │
-│  │  WatchEvent(CHILDREN_CHANGED)  Message                │ │
-│  └───────────────────────────────────────────────────────┘ │
+│                         │                                │
+│  ┌──────────────────────▼──────────────────────────────┐ │
+│  │                 hutulock-model                       │ │
+│  │  ZNode(czxid/mzxid)  ZNodePath  Session             │ │
+│  │  WatchEvent(CHILDREN_CHANGED)  Message               │ │
+│  └──────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
-```
+         ▲                ▲                ▲
+    Java SDK         Python SDK         Go SDK
+
+┌─────────────────────────────────────────────────────────┐
+│                   hutulock-admin                         │
+│                                                         │
+│  AdminApiServer（JDK HttpServer + REST API）             │
+│  AdminTokenStore（SecureRandom Token + 8h TTL）          │
+│  ui/（Vue 3 + Element Plus，构建产物打包进 jar）           │
+│                                                         │
+│  依赖：hutulock-server（RaftNode、DefaultSessionManager、 │
+│        DefaultZNodeTree）                                │
+└─────────────────────────────────────────────────────────┘

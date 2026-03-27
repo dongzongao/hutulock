@@ -248,9 +248,106 @@ serverProperties → memoryManager → eventBus → metrics → metricsHttpServe
 
 | 限制 | 影响 | 计划 |
 |------|------|------|
-| Raft 日志为内存存储 | 节点重启后日志丢失 | 实现 WAL 持久化 |
-| ZNode 树为内存存储 | 节点重启后状态丢失 | 实现快照（Snapshot） |
+| ZNode 树为内存存储 | 节点重启后状态丢失（快照可恢复） | 实现 RocksDB 持久化 |
 | 无 Raft 日志压缩 | 长期运行日志无限增长 | 实现 Log Compaction |
 | REDIRECT 依赖 nodeId | 客户端需要维护 nodeId→地址映射 | 改为直接返回 host:port |
 | 单线程 Raft 调度器 | 高并发下可能成为瓶颈 | 评估多线程优化 |
 | DefaultZNodeTree 全局锁 | 不同锁名的写操作互相阻塞 | 按 lockRoot 路径分段加锁 |
+
+---
+
+## ADR-014：Raft 日志 WAL 持久化
+
+**背景：** 原始实现日志存储在内存，节点重启后日志丢失，无法满足生产环境要求。
+
+**决策：** 在 `RaftLog` 中实现 WAL（Write-Ahead Log）持久化，同时实现 `Lifecycle` 接口。
+
+**格式：** 每行一条，`{index}\t{term}\t{command}`，command 中的 TAB/换行/反斜杠转义。
+
+**关键设计：**
+- `append`：追加写 + `channel.force(false)` fsync（data only，不强制 metadata，性能更好）
+- `truncateFrom`：重写整个文件 + fsync + fsync 目录（确保 rename 后目录项持久化）
+- `loadFromWal`：启动时校验 index 连续性，遇到跳跃截断并 warn（防止损坏数据静默接受）
+- `RaftMetaStore`：`currentTerm/votedFor` 原子替换（写临时文件 → fsync → rename → fsync 目录）
+- 重启恢复：加载快照 → 重放快照点之后的 WAL 增量日志
+
+**两种模式：**
+- `new RaftLog()`：内存模式（测试用）
+- `new RaftLog(dataDir)`：WAL 持久化模式
+
+---
+
+## ADR-015：动态集群成员变更（Joint Consensus）
+
+**背景：** 静态集群配置无法在不停机的情况下扩缩容。
+
+**决策：** 实现 Raft §6 的 Joint Consensus 两阶段成员变更。
+
+**核心类：**
+
+| 类 | 职责 |
+|----|------|
+| `ClusterConfig` | 不可变配置值对象，支持 NORMAL 和 JOINT 两种阶段 |
+| `MembershipChange` | 变更命令编解码，作为 Raft 日志条目传播 |
+
+**两阶段流程：**
+```
+1. Leader propose C_old,new（JOINT）→ 复制到多数派 → apply
+2. JOINT commit 后 Leader 自动 propose C_new（NORMAL）→ 复制 → apply
+3. NORMAL commit 后清理不在新配置中的 peer 连接
+4. 若 Leader 自身不在新配置中，主动降级为 FOLLOWER
+```
+
+**安全性：** JOINT 阶段任何决策（选举/提交）都需要 C_old 和 C_new 各自的多数派同意，防止脑裂。
+
+**API：**
+```java
+// 添加成员（返回 CompletableFuture，变更完成后 complete）
+raftNode.addMember("n4", "127.0.0.1", 9884);
+
+// 移除成员
+raftNode.removeMember("n3");
+```
+
+**约束：** 同一时刻只允许一个成员变更在途（`membershipChangePending` 标志）。
+
+---
+
+## ADR-016：Web 管理控制台（hutulock-admin 模块）
+
+**背景：** 需要一个可视化界面管理集群状态、会话、锁和成员变更。
+
+**决策：** 新增独立的 `hutulock-admin` Maven 模块，前后端分离。
+
+**技术栈：**
+- 后端：JDK 内置 `HttpServer`（零额外依赖）+ Session Token 鉴权
+- 前端：Vue 3 + Element Plus + Pinia + Vue Router + Axios
+
+**鉴权流程：**
+```
+POST /api/admin/login → 返回 Bearer token（SecureRandom 32 字节，有效期 8h）
+→ 存 localStorage → axios 拦截器自动附加 Authorization 头
+→ 401 时自动跳转登录页
+```
+
+**默认账户：** `admin` / `admin123`，可通过 `-Dhutulock.admin.username/password` 覆盖。
+
+**前端构建：**
+```bash
+cd hutulock-admin/ui
+npm install && npm run build
+# 产物输出到 hutulock-admin/src/main/resources/admin-ui/，打包进 jar
+```
+
+**API 端点：**
+
+| 端点 | 说明 |
+|------|------|
+| `POST /api/admin/login` | 登录，返回 token |
+| `POST /api/admin/logout` | 注销 |
+| `GET  /api/admin/cluster` | 集群状态（需鉴权） |
+| `GET  /api/admin/sessions` | 会话列表（需鉴权） |
+| `GET  /api/admin/locks` | 锁状态（需鉴权） |
+| `POST /api/admin/members/add` | 添加成员（需鉴权） |
+| `POST /api/admin/members/remove` | 移除成员（需鉴权） |
+| `GET  /` | 前端 SPA 入口 |

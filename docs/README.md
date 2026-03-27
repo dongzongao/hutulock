@@ -79,6 +79,7 @@ hutulock/
 ├── hutulock-server/    服务端实现（Raft + ZNode + Session）
 ├── hutulock-client/    Java 客户端 SDK
 ├── hutulock-cli/       交互式命令行工具
+├── hutulock-admin/     Web 管理控制台（Vue 3 + REST API）
 └── sdk/
     ├── python/         Python SDK（零依赖）
     ├── go/             Go SDK（零依赖）
@@ -145,6 +146,8 @@ hutulock(a3f8c2d1)[1 lock(s)]> unlock order-lock
     <version>1.0.0</version>
 </dependency>
 ```
+
+> 从 GitHub Packages 安装，需在 `~/.m2/settings.xml` 配置认证，详见 [发布说明](#-发布与安装)。
 
 ```java
 HutuLockClient client = HutuLockClient.builder()
@@ -314,14 +317,94 @@ hutulock:
 - [x] DelayQueue propose 超时管理
 - [x] 持久 Watcher（参考 ZooKeeper 3.6 addWatch）
 - [x] ZNode czxid/mzxid（事务 ID，线性一致读基础）
-- [ ] Raft 日志持久化（WAL）
-- [ ] 动态集群成员变更
-- [ ] Web 管理控制台
+- [x] Raft 日志持久化（WAL + fsync + 崩溃恢复）
+- [x] ZNode 快照（Snapshot + 增量日志重放）
+- [x] 动态集群成员变更（Joint Consensus，Raft §6）
+- [x] Web 管理控制台（Vue 3 + Element Plus + JWT 鉴权）
+- [x] GitHub Packages 发布（Maven + GitHub Actions CI/CD）
 - [ ] Kubernetes Operator
 
 ---
 
-## 📄 文档
+## 🌐 Web 管理控制台
+
+服务启动后访问 `http://localhost:9091`（默认账户 `admin` / `admin123`）：
+
+| 页面 | 功能 |
+|------|------|
+| 集群状态 | 节点角色、Leader、Peer 的 nextIndex/matchIndex/inFlight、配置阶段 |
+| 活跃会话 | Session ID、Client、状态、剩余 TTL，每 5s 自动刷新 |
+| 锁状态 | 持锁者和等待队列，每 3s 自动刷新 |
+| 成员管理 | 动态添加/移除节点（Joint Consensus 两阶段变更） |
+
+```yaml
+hutulock:
+  server:
+    admin:
+      enabled: true
+      port: 9091   # 访问 http://localhost:9091
+```
+
+自定义账户（通过系统属性覆盖默认值）：
+
+```bash
+java -Dhutulock.admin.username=myuser \
+     -Dhutulock.admin.password=mypass \
+     -jar hutulock-server.jar node1 8881 9881
+```
+
+---
+
+## 📤 发布与安装
+
+HutuLock 发布到 [GitHub Packages](https://github.com/hutulock/hutulock/packages)，通过 GitHub Actions 在打 tag 时自动触发。
+
+**安装依赖前，在 `~/.m2/settings.xml` 中配置认证：**
+
+```xml
+<settings>
+  <servers>
+    <server>
+      <id>github</id>
+      <username>YOUR_GITHUB_USERNAME</username>
+      <password>YOUR_GITHUB_TOKEN</password>  <!-- 需要 read:packages 权限 -->
+    </server>
+  </servers>
+  <profiles>
+    <profile>
+      <id>github</id>
+      <repositories>
+        <repository>
+          <id>github</id>
+          <url>https://maven.pkg.github.com/hutulock/hutulock</url>
+        </repository>
+      </repositories>
+    </profile>
+  </profiles>
+  <activeProfiles>
+    <activeProfile>github</activeProfile>
+  </activeProfiles>
+</settings>
+```
+
+**在项目 `pom.xml` 中添加依赖：**
+
+```xml
+<dependency>
+    <groupId>com.hutulock</groupId>
+    <artifactId>hutulock-client</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
+**发布新版本（打 tag 自动触发 CI）：**
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+---
 
 | 文档 | 说明 |
 |------|------|
