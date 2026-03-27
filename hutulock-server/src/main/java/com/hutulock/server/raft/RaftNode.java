@@ -380,6 +380,17 @@ public class RaftNode implements Lifecycle {
     public boolean isLeader()    { return state.role == Role.LEADER;    }
     public ScheduledExecutorService getScheduler() { return scheduler;  }
 
+    /** 获取当前集群配置（供 Admin 控制台读取）。 */
+    public com.hutulock.server.raft.ClusterConfig getClusterConfig() { return state.clusterConfig; }
+
+    /** 获取 peer 列表快照（供 Admin 控制台读取）。 */
+    public java.util.List<com.hutulock.server.raft.RaftPeer> getPeers() {
+        return java.util.Collections.unmodifiableList(state.peers);
+    }
+
+    /** 是否有成员变更正在进行（供 Admin 控制台读取）。 */
+    public boolean isMembershipChangePending() { return state.membershipChangePending; }
+
     // ==================== 快照 ====================
 
     /**

@@ -72,6 +72,13 @@ public final class ServerProperties {
     /** Metrics HTTP 端口，默认 9090 */
     public final int     metricsPort;
 
+    // ---- Admin 控制台参数 ----
+
+    /** 是否启用 Web 管理控制台，默认 true */
+    public final boolean adminEnabled;
+    /** Admin 控制台 HTTP 端口，默认 9091 */
+    public final int     adminPort;
+
     // ---- 安全参数 ----
 
     /** 是否启用安全认证，默认 false（开发模式） */
@@ -103,6 +110,8 @@ public final class ServerProperties {
         this.maxFrameLength        = b.maxFrameLength;
         this.metricsEnabled        = b.metricsEnabled;
         this.metricsPort           = b.metricsPort;
+        this.adminEnabled          = b.adminEnabled;
+        this.adminPort             = b.adminPort;
         this.securityEnabled       = b.securityEnabled;
         this.tlsEnabled            = b.tlsEnabled;
         this.tlsCertFile           = b.tlsCertFile;
@@ -134,6 +143,8 @@ public final class ServerProperties {
         private int     maxFrameLength         = 4096;
         private boolean metricsEnabled         = true;
         private int     metricsPort            = 9090;
+        private boolean adminEnabled           = true;
+        private int     adminPort              = 9091;
         // 安全参数
         private boolean securityEnabled        = false;
         private boolean tlsEnabled             = false;
@@ -158,6 +169,8 @@ public final class ServerProperties {
         public Builder maxFrameLength(int n)         { maxFrameLength         = n;   return this; }
         public Builder metricsEnabled(boolean b)     { metricsEnabled         = b;   return this; }
         public Builder metricsPort(int port)         { metricsPort            = port;return this; }
+        public Builder adminEnabled(boolean b)       { adminEnabled           = b;   return this; }
+        public Builder adminPort(int port)           { adminPort              = port;return this; }
         public Builder securityEnabled(boolean b)    { securityEnabled        = b;   return this; }
         public Builder tlsEnabled(boolean b)         { tlsEnabled             = b;   return this; }
         public Builder tlsCertFile(String f)         { tlsCertFile            = f;   return this; }

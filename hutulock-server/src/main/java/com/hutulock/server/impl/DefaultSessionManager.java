@@ -165,6 +165,11 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
     @Override public String  getSessionId(Channel channel) { return channelToSession.get(channel.id().asShortText()); }
     @Override public int     activeSessionCount()          { return sessions.size(); }
 
+    /** 返回所有活跃会话的快照列表（供 Admin 控制台读取）。 */
+    public java.util.List<com.hutulock.model.session.Session> listSessions() {
+        return new java.util.ArrayList<>(sessions.values());
+    }
+
     @Override
     public void shutdown() {
         scanner.shutdownNow();

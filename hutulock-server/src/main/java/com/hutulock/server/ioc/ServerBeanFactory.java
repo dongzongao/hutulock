@@ -214,5 +214,21 @@ public final class ServerBeanFactory {
                         ctx.getBean(SessionTracker.class),
                         ctx.getBean(RaftNode.class),
                         ctx.getBean(ServerProperties.class))));
+
+        // ---- 9. Admin 控制台 ----
+        ctx.register(BeanDefinition.of("adminHttpServer",
+                com.hutulock.server.admin.AdminHttpServer.class, () -> {
+            ServerProperties props = ctx.getBean(ServerProperties.class);
+            if (!props.adminEnabled) return null;
+            ZNodeStorage storage = ctx.getBean(ZNodeStorage.class);
+            DefaultZNodeTree tree = (storage instanceof DefaultZNodeTree)
+                ? (DefaultZNodeTree) storage : null;
+            DefaultSessionManager sessionMgr = ctx.getBean(DefaultSessionManager.class);
+            return new com.hutulock.server.admin.AdminHttpServer(
+                props.adminPort, nodeId,
+                ctx.getBean(RaftNode.class),
+                sessionMgr,
+                tree);
+        }));
     }
 }
