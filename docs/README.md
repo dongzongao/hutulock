@@ -4,6 +4,8 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-11%2B-orange.svg)](https://openjdk.org/)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://python.org/)
+[![Go](https://img.shields.io/badge/Go-1.21%2B-00ADD8.svg)](https://go.dev/)
 
 ---
 
@@ -12,6 +14,10 @@
 - [项目概述](#项目概述)
 - [模块结构](#模块结构)
 - [快速开始](#快速开始)
+- [客户端 SDK](#客户端-sdk)
+  - [Java SDK](#java-sdk)
+  - [Python SDK](#python-sdk)
+  - [Go SDK](#go-sdk)
 - [CLI 工具](#cli-工具)
 - [配置参考](#配置参考)
 - [技术细节](technical-details.md)
@@ -34,6 +40,7 @@ HutuLock 是一个生产级分布式锁服务，核心特性：
 | 看门狗 | 客户端定时心跳续期，服务端 TTL 兜底，防止锁永久占用 |
 | 安全 | Token/HMAC 认证、ACL 授权、TLS 加密、限流、审计日志 |
 | 可观测 | Prometheus Metrics、结构化日志、事件总线 |
+| 多语言 SDK | Java / Python / Go，协议完全兼容 |
 | CLI | 交互式命令行工具，支持连接集群、管理锁、查看状态 |
 | IoC 容器 | 轻量级内置容器管理所有内存组件，支持生命周期和依赖注入 |
 | 代理增强 | JDK 动态代理模块，无侵入地为 SPI 接口添加日志、指标、重试 |
@@ -50,8 +57,11 @@ hutulock/
 ├── hutulock-config/    配置加载（YAML / 代码）
 ├── hutulock-proxy/     JDK 动态代理（日志 / 指标 / 重试）
 ├── hutulock-server/    服务端实现（含 IoC 容器）
-├── hutulock-client/    客户端 SDK
-└── hutulock-cli/       交互式命令行工具
+├── hutulock-client/    Java 客户端 SDK
+├── hutulock-cli/       交互式命令行工具
+└── sdk/
+    ├── python/         Python SDK（Python 3.8+，零依赖）
+    └── go/             Go SDK（Go 1.21+，零依赖）
 ```
 
 **依赖关系：**
@@ -167,12 +177,6 @@ mvn clean package -DskipTests
 ./bin/cluster.sh start
 ```
 
-**启动集群并开启全量代理：**
-
-```bash
-./bin/cluster.sh start --proxy all
-```
-
 **查看状态：**
 
 ```bash
@@ -181,12 +185,6 @@ mvn clean package -DskipTests
 #   node1: RUNNING  PID=12345  client=:8881  metrics=:9090  health=UP
 #   node2: RUNNING  PID=12346  client=:8882  metrics=:9091  health=UP
 #   node3: RUNNING  PID=12347  client=:8883  metrics=:9092  health=UP
-```
-
-**实时查看 node2 日志：**
-
-```bash
-./bin/cluster.sh logs node2
 ```
 
 **停止集群：**
@@ -205,21 +203,35 @@ mvn clean package -DskipTests
 
 ---
 
-### 代理增强（--proxy）
+## 客户端 SDK
 
-`--proxy` 通过系统属性 `-Dhutulock.proxy=<types>` 控制代理层，默认不启用：
+所有 SDK 使用相同的文本行协议（UTF-8），与服务端完全兼容。
 
-| 值 | 效果 |
-|----|------|
-| `logging` | 记录每次方法调用的入参、耗时、异常（DEBUG 级别） |
-| `metrics` | 统计调用次数、失败次数、平均耗时 |
-| `all` | 等价于 `logging,metrics` |
+### 协议概览
 
-生效范围：`ZNodeStorage`（日志+指标）、`SessionTracker`（日志）、`EventBus`（日志）。
+| 客户端发送 | 服务端响应 |
+|-----------|-----------|
+| `CONNECT [sessionId]` | `CONNECTED {sessionId}` |
+| `LOCK {name} {sessionId}` | `OK {name} {seqPath}` 或 `WAIT {name} {seqPath}` |
+| `RECHECK {name} {seqPath} {sessionId}` | `OK` 或 `WAIT` |
+| `UNLOCK {seqPath} {sessionId}` | `RELEASED {name}` |
+| `RENEW {name} {sessionId}` | `RENEWED {name}` |
+| — | `WATCH_EVENT {type} {path}`（服务端主动推送） |
+| — | `REDIRECT {leaderId}`（非 Leader 节点重定向） |
 
 ---
 
-### 客户端 SDK 使用
+### Java SDK
+
+**依赖（Maven）：**
+
+```xml
+<dependency>
+    <groupId>com.hutulock</groupId>
+    <artifactId>hutulock-client</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
 
 **简单用法：**
 
@@ -258,6 +270,126 @@ try {
 
 ---
 
+### Python SDK
+
+**安装：**
+
+```bash
+pip install hutulock
+# 或从源码
+pip install -e sdk/python
+```
+
+**要求：** Python 3.8+，零外部依赖。
+
+**上下文管理器（推荐）：**
+
+```python
+from hutulock import HutuLockClient
+
+with HutuLockClient(nodes=[("127.0.0.1", 8881), ("127.0.0.1", 8882)]) as client:
+    with client.lock("order-lock") as token:
+        # 临界区
+        process_order()
+```
+
+**手动管理：**
+
+```python
+from hutulock import HutuLockClient
+
+client = HutuLockClient(
+    nodes=[("127.0.0.1", 8881), ("127.0.0.1", 8882)],
+    lock_timeout=30.0,        # 获取锁超时（秒），默认 30
+    watchdog_interval=10.0,   # 看门狗心跳间隔（秒），默认 10
+)
+client.connect()
+
+token = client.acquire("order-lock")
+try:
+    process_order()
+finally:
+    client.release(token)
+
+client.close()
+```
+
+**运行测试：**
+
+```bash
+cd sdk/python
+python3 -m unittest discover -s tests -v
+```
+
+---
+
+### Go SDK
+
+**安装：**
+
+```bash
+go get github.com/hutulock/hutulock-go
+```
+
+**要求：** Go 1.21+，零外部依赖（仅标准库）。
+
+**基本用法：**
+
+```go
+import (
+    hutulock "github.com/hutulock/hutulock-go"
+    "context"
+)
+
+client, err := hutulock.New(hutulock.Config{
+    Nodes: []string{"127.0.0.1:8881", "127.0.0.1:8882"},
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Close()
+
+ctx := context.Background()
+
+token, err := client.Lock(ctx, "order-lock")
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Unlock(ctx, token)
+
+// 临界区
+processOrder()
+```
+
+**完整配置：**
+
+```go
+client, err := hutulock.New(hutulock.Config{
+    Nodes:            []string{"127.0.0.1:8881", "127.0.0.1:8882"},
+    ConnectTimeout:   5 * time.Second,   // 默认 5s
+    LockTimeout:      30 * time.Second,  // 默认 30s
+    WatchdogInterval: 10 * time.Second,  // 默认 10s
+})
+```
+
+**带超时的 context：**
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+
+token, err := client.Lock(ctx, "order-lock")
+```
+
+**运行测试：**
+
+```bash
+cd sdk/go
+go test ./... -v
+```
+
+---
+
 ## CLI 工具
 
 ### bin/cli.sh — 交互式命令行
@@ -269,22 +401,10 @@ try {
   --jvm <opts>   追加 JVM 参数（引号包裹）
 ```
 
-**交互模式（启动后手动 connect）：**
-
-```bash
-./bin/cli.sh
-```
-
 **启动时自动连接集群：**
 
 ```bash
 ./bin/cli.sh 127.0.0.1:8881 127.0.0.1:8882 127.0.0.1:8883
-```
-
-**自定义 JVM 参数：**
-
-```bash
-./bin/cli.sh --jvm "-Xmx256m" 127.0.0.1:8881
 ```
 
 ### 支持命令
@@ -310,12 +430,6 @@ hutulock(disconnected)> connect 127.0.0.1:8881
 hutulock(a3f8c2d1)> lock order-lock
   Acquiring lock [order-lock] (timeout=30s)...
 ✓ Lock acquired: order-lock [/locks/order-lock/seq-0000000001] in 12ms
-
-hutulock(a3f8c2d1)[1 lock(s)]> status
-Connected to: 127.0.0.1:8881
-Session ID:   a3f8c2d1e4b5f6a7
-Held locks:
-  order-lock [seq=/locks/order-lock/seq-0000000001, state=HELD, held=yes]
 
 hutulock(a3f8c2d1)[1 lock(s)]> unlock order-lock
 ✓ Lock released: order-lock
