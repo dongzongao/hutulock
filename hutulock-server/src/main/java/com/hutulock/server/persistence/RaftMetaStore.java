@@ -62,7 +62,7 @@ public final class RaftMetaStore {
 
     /**
      * 持久化 currentTerm 和 votedFor。
-     * 使用原子替换：写临时文件 → fsync → rename，防止半写损坏。
+     * 使用原子替换：写临时文件 → fsync → rename → fsync 目录，防止半写损坏。
      */
     public synchronized void persist(int currentTerm, String votedFor) {
         try {
@@ -73,6 +73,13 @@ public final class RaftMetaStore {
                 StandardOpenOption.SYNC);
             Files.move(tmpPath, metaPath,
                 StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            // fsync 目录，确保 rename 后目录项持久化
+            try (java.nio.channels.FileChannel dirChannel =
+                     java.nio.channels.FileChannel.open(metaPath.getParent())) {
+                dirChannel.force(true);
+            } catch (IOException ignored) {
+                // 部分文件系统不支持目录 fsync（如 Windows），降级忽略
+            }
         } catch (IOException e) {
             log.error("Failed to persist Raft meta (term={}, votedFor={}): {}",
                 currentTerm, votedFor, e.getMessage());

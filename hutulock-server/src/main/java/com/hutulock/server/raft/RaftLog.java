@@ -19,8 +19,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.hutulock.model.util.Strings;
+import com.hutulock.server.ioc.Lifecycle;
 
 import java.io.*;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.ArrayList;
@@ -53,7 +55,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * @author HutuLock Authors
  * @since 1.0.0
  */
-public class RaftLog {
+public class RaftLog implements Lifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(RaftLog.class);
 
@@ -102,23 +104,38 @@ public class RaftLog {
      */
     public RaftLog(String dataDir) {
         Path dir = Paths.get(dataDir).toAbsolutePath().normalize();
-        // 防止目录穿越：确保规范化后的路径仍以 dataDir 为前缀
-        if (!dir.startsWith(Paths.get(dataDir).toAbsolutePath().getParent().normalize())) {
-            // 只要路径合法（normalize 后不含 ..）即可，此处做基本校验
-        }
         try {
             Files.createDirectories(dir);
         } catch (IOException e) {
             throw new RuntimeException("Cannot create data dir: " + dataDir, e);
         }
         this.walPath = dir.resolve(WAL_FILE).normalize();
-        // 确保 WAL 文件在 dataDir 内，防止路径穿越
+        // 防止路径穿越：WAL 文件必须在 dataDir 内
         if (!walPath.startsWith(dir)) {
             throw new IllegalArgumentException("WAL path escapes data directory: " + walPath);
         }
         entries.add(new Entry(0, 0, "")); // 哨兵（不写入 WAL）
         loadFromWal();
         openWalAppend();
+    }
+
+    // ==================== Lifecycle ====================
+
+    @Override
+    public void start() {
+        // 构造函数已完成 WAL 加载和流打开，此处仅记录日志
+        log.info("RaftLog started — walPath={}, entries={}", walPath, entries.size() - 1);
+    }
+
+    @Override
+    public void shutdown() {
+        lock.writeLock().lock();
+        try {
+            closeWalOut();
+            log.info("RaftLog shutdown — walPath={}, entries={}", walPath, entries.size() - 1);
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     // ==================== 写操作（独占锁）====================
@@ -217,6 +234,7 @@ public class RaftLog {
     /**
      * 启动时从 WAL 文件加载所有日志条目到内存。
      * 若文件不存在（首次启动）直接返回。
+     * 加载时校验 index 连续性，遇到跳跃则截断并 warn。
      */
     private void loadFromWal() {
         if (!Files.exists(walPath)) {
@@ -224,16 +242,22 @@ public class RaftLog {
             return;
         }
         int loaded = 0;
+        int expectedIndex = 1; // 哨兵占 0，第一条从 1 开始
         try (BufferedReader reader = Files.newBufferedReader(walPath, StandardCharsets.UTF_8)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
                 if (line.isEmpty()) continue;
                 Entry e = parseLine(line);
-                if (e != null) {
-                    entries.add(e);
-                    loaded++;
+                if (e == null) continue; // 解析失败，parseLine 已记录 warn
+                if (e.index != expectedIndex) {
+                    log.warn("WAL index discontinuity: expected={}, got={}, truncating tail",
+                        expectedIndex, e.index);
+                    break; // 截断后续损坏数据
                 }
+                entries.add(e);
+                loaded++;
+                expectedIndex++;
             }
         } catch (IOException ex) {
             throw new RuntimeException("Failed to load WAL from " + walPath, ex);
@@ -265,7 +289,7 @@ public class RaftLog {
 
     /**
      * 截断后重写整个 WAL 文件。
-     * 先关闭追加流，重写，再重新打开追加流。
+     * 先关闭追加流，重写并 fsync，再 fsync 目录（确保 rename 持久化），最后重新打开追加流。
      */
     private void rewriteWal() {
         closeWalOut();
@@ -274,11 +298,26 @@ public class RaftLog {
             for (int i = 1; i < entries.size(); i++) {
                 writeEntryToWal(out, entries.get(i));
             }
+            out.getChannel().force(true); // fsync data + metadata
         } catch (IOException e) {
             throw new RuntimeException("WAL rewrite failed", e);
         }
+        // fsync 目录，确保文件元数据（大小变更）持久化
+        fsyncDir();
         openWalAppend();
         log.debug("WAL rewritten, {} entries", entries.size() - 1);
+    }
+
+    /** fsync 数据目录，确保目录项变更（如 rename）持久化到磁盘。 */
+    private void fsyncDir() {
+        if (walPath == null) return;
+        Path dir = walPath.getParent();
+        try (FileChannel dirChannel = FileChannel.open(dir)) {
+            dirChannel.force(true);
+        } catch (IOException e) {
+            // 部分文件系统（如 Windows）不支持目录 fsync，降级为 warn
+            log.warn("Cannot fsync directory {}: {}", dir, e.getMessage());
+        }
     }
 
     private void closeWalOut() {
