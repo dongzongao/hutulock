@@ -494,7 +494,12 @@ public final class RaftReplication {
             RaftLog.Entry entry = state.raftLog.get(i);
             if (entry == null) continue;
 
-            stateMachine.apply(entry.index, entry.command);
+            // 成员变更命令：apply 时更新集群配置，不传给业务状态机
+            if (MembershipChange.isMembershipChange(entry.command)) {
+                applyMembershipChange(entry.command);
+            } else {
+                stateMachine.apply(entry.index, entry.command);
+            }
             log.debug("Applied log[{}]: {}", entry.index, entry.command);
 
             eventBus.publish(RaftEvent.builder(RaftEvent.Type.LOG_COMMITTED, nodeId, state.currentTerm)
@@ -505,6 +510,54 @@ public final class RaftReplication {
         }
         state.commitIndex = newCommitIndex;
         state.lastApplied = newCommitIndex;
+    }
+
+    /**
+     * Apply 成员变更命令，更新 clusterConfig 和 peers 列表。
+     *
+     * <p>JOINT commit 后自动 propose C_new（NORMAL），完成第二阶段。
+     * NORMAL commit 后清除 membershipChangePending，移除不在新配置中的 peer。
+     */
+    private void applyMembershipChange(String command) {
+        MembershipChange change = MembershipChange.decode(command);
+        ClusterConfig newConfig = change.applyTo(state.clusterConfig);
+        state.clusterConfig = newConfig;
+        log.info("Applied membership change: {}", change);
+
+        if (change.type == MembershipChange.Type.JOINT) {
+            // JOINT commit 后，Leader 自动 propose C_new（NORMAL）
+            if (state.role == RaftNode.Role.LEADER) {
+                String normalCmd = MembershipChange.encodeNormal(change.newMembers);
+                log.info("JOINT committed, proposing NORMAL config: {}", change.newMembers);
+                // 异步 propose，避免在 advanceCommitIndex 锁内递归
+                scheduler.execute(() -> {
+                    synchronized (RaftReplication.this) {
+                        doPropose(normalCmd);
+                    }
+                });
+            }
+        } else {
+            // NORMAL commit：变更完成，清理状态
+            state.membershipChangePending = false;
+            log.info("Membership change complete, new config: {}", newConfig);
+
+            // 移除不在新配置中的 peer 连接（含被移除的节点）
+            java.util.Set<String> newMembers = change.oldMembers; // NORMAL 时 oldMembers 即新成员
+            state.peers.removeIf(p -> {
+                if (!newMembers.contains(p.nodeId)) {
+                    log.info("Removing peer {} (not in new config)", p.nodeId);
+                    return true;
+                }
+                return false;
+            });
+
+            // 若自身不在新配置中（被移除的 Leader），主动降级
+            if (!newMembers.contains(nodeId)) {
+                log.info("This node [{}] is not in new config, stepping down", nodeId);
+                RaftRoleStateMachine.INSTANCE.tryTransit(state, RaftNode.Role.FOLLOWER);
+                failPendingProposesOnStepDown();
+            }
+        }
     }
 
     // ==================== 降级清理 ====================

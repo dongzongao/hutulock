@@ -124,6 +124,104 @@ public class RaftNode implements Lifecycle {
         RaftPeer peer = new RaftPeer(peerId, host, port, this, raftGroup);
         state.peers.add(peer);
         peer.connect();
+        // 同步更新 clusterConfig（初始化阶段，非 Joint Consensus 路径）
+        updateConfigFromPeers();
+    }
+
+    /**
+     * 动态添加成员（Joint Consensus，Raft §6）。
+     *
+     * <p>通过 propose 特殊日志条目触发两阶段成员变更：
+     * <ol>
+     *   <li>propose C_old,new（JOINT）→ 复制到多数派 → apply → 自动 propose C_new（NORMAL）</li>
+     *   <li>C_new commit 后变更完成，旧成员自动退出</li>
+     * </ol>
+     *
+     * @param newNodeId 新节点 ID
+     * @param host      新节点 Raft 地址
+     * @param port      新节点 Raft 端口
+     * @return CompletableFuture，变更完成（C_new commit）后完成
+     * @throws IllegalStateException 非 Leader 或已有变更在途
+     */
+    public java.util.concurrent.CompletableFuture<Void> addMember(String newNodeId, String host, int port) {
+        synchronized (replication) {
+            if (!isLeader()) {
+                java.util.concurrent.CompletableFuture<Void> f = new java.util.concurrent.CompletableFuture<>();
+                f.completeExceptionally(new IllegalStateException("NOT_LEADER:" + state.leaderId));
+                return f;
+            }
+            if (state.membershipChangePending) {
+                java.util.concurrent.CompletableFuture<Void> f = new java.util.concurrent.CompletableFuture<>();
+                f.completeExceptionally(new IllegalStateException("MEMBERSHIP_CHANGE_IN_PROGRESS"));
+                return f;
+            }
+            // 先建立连接（新节点需要接收日志）
+            if (state.peers.stream().noneMatch(p -> p.nodeId.equals(newNodeId))) {
+                RaftPeer peer = new RaftPeer(newNodeId, host, port, this, raftGroup);
+                state.peers.add(peer);
+                peer.connect();
+            }
+            state.membershipChangePending = true;
+
+            // 构建 C_old,new
+            java.util.Set<String> oldMembers = currentMemberIds();
+            java.util.Set<String> newMembers = new java.util.LinkedHashSet<>(oldMembers);
+            newMembers.add(newNodeId);
+
+            String jointCmd = MembershipChange.encodeJoint(oldMembers, newMembers);
+            log.info("Proposing JOINT config: old={}, new={}", oldMembers, newMembers);
+            return replication.propose(jointCmd);
+        }
+    }
+
+    /**
+     * 动态移除成员（Joint Consensus，Raft §6）。
+     *
+     * @param removeNodeId 要移除的节点 ID
+     * @return CompletableFuture，变更完成后完成
+     * @throws IllegalStateException 非 Leader 或已有变更在途
+     */
+    public java.util.concurrent.CompletableFuture<Void> removeMember(String removeNodeId) {
+        synchronized (replication) {
+            if (!isLeader()) {
+                java.util.concurrent.CompletableFuture<Void> f = new java.util.concurrent.CompletableFuture<>();
+                f.completeExceptionally(new IllegalStateException("NOT_LEADER:" + state.leaderId));
+                return f;
+            }
+            if (state.membershipChangePending) {
+                java.util.concurrent.CompletableFuture<Void> f = new java.util.concurrent.CompletableFuture<>();
+                f.completeExceptionally(new IllegalStateException("MEMBERSHIP_CHANGE_IN_PROGRESS"));
+                return f;
+            }
+            java.util.Set<String> oldMembers = currentMemberIds();
+            if (!oldMembers.contains(removeNodeId)) {
+                java.util.concurrent.CompletableFuture<Void> f = new java.util.concurrent.CompletableFuture<>();
+                f.completeExceptionally(new IllegalStateException("MEMBER_NOT_FOUND:" + removeNodeId));
+                return f;
+            }
+            state.membershipChangePending = true;
+
+            java.util.Set<String> newMembers = new java.util.LinkedHashSet<>(oldMembers);
+            newMembers.remove(removeNodeId);
+
+            String jointCmd = MembershipChange.encodeJoint(oldMembers, newMembers);
+            log.info("Proposing JOINT config for removal: old={}, new={}", oldMembers, newMembers);
+            return replication.propose(jointCmd);
+        }
+    }
+
+    /** 获取当前所有成员 ID（含自身）。 */
+    private java.util.Set<String> currentMemberIds() {
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        ids.add(nodeId);
+        state.peers.forEach(p -> ids.add(p.nodeId));
+        return ids;
+    }
+
+    /** 根据当前 peers 列表同步更新 clusterConfig（初始化阶段使用）。 */
+    private void updateConfigFromPeers() {
+        java.util.Set<String> members = currentMemberIds();
+        state.clusterConfig = ClusterConfig.normal(members);
     }
 
     /**
