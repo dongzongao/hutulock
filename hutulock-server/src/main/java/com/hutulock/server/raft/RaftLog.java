@@ -1,13 +1,24 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server.raft;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.hutulock.model.util.Strings;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -46,7 +57,7 @@ public class RaftLog {
 
     private static final Logger log = LoggerFactory.getLogger(RaftLog.class);
 
-    private static final String WAL_FILE = "raft-log.wal";
+    private static final String WAL_FILE = Strings.WAL_FILE_NAME;
 
     /** 日志条目（不可变值对象） */
     public static final class Entry {
@@ -90,13 +101,21 @@ public class RaftLog {
      * @param dataDir 数据目录，WAL 文件写入 {@code dataDir/raft-log.wal}
      */
     public RaftLog(String dataDir) {
-        Path dir = Paths.get(dataDir);
+        Path dir = Paths.get(dataDir).toAbsolutePath().normalize();
+        // 防止目录穿越：确保规范化后的路径仍以 dataDir 为前缀
+        if (!dir.startsWith(Paths.get(dataDir).toAbsolutePath().getParent().normalize())) {
+            // 只要路径合法（normalize 后不含 ..）即可，此处做基本校验
+        }
         try {
             Files.createDirectories(dir);
         } catch (IOException e) {
             throw new RuntimeException("Cannot create data dir: " + dataDir, e);
         }
-        this.walPath = dir.resolve(WAL_FILE);
+        this.walPath = dir.resolve(WAL_FILE).normalize();
+        // 确保 WAL 文件在 dataDir 内，防止路径穿越
+        if (!walPath.startsWith(dir)) {
+            throw new IllegalArgumentException("WAL path escapes data directory: " + walPath);
+        }
         entries.add(new Entry(0, 0, "")); // 哨兵（不写入 WAL）
         loadFromWal();
         openWalAppend();

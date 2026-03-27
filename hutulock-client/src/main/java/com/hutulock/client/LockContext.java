@@ -1,11 +1,21 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.client;
 
+import com.hutulock.model.exception.HutuLockException;
 import io.netty.channel.Channel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,8 +85,10 @@ public final class LockContext {
      * 获锁成功后启动看门狗，定时向服务端发送 RENEW 心跳。
      *
      * @param channel 当前连接的 Netty Channel
+     * @throws HutuLockException 若当前状态不允许转换到 HELD
      */
     void startWatchdog(Channel channel) {
+        LockStateMachine.INSTANCE.transit(state, State.HELD);
         state = State.HELD;
         watchdogTask = scheduler.scheduleAtFixedRate(() -> {
             if (state != State.HELD) { stopWatchdog(); return; }
@@ -98,16 +110,16 @@ public final class LockContext {
 
     /** 标记锁已过期，触发 onExpired 回调。 */
     void markExpired() {
-        if (state == State.HELD) {
-            state = State.EXPIRED;
-            stopWatchdog();
-            log.warn("Lock [{}] expired for session {}", lockName, sessionId);
-            if (onExpiredCallback != null) onExpiredCallback.accept(lockName);
-        }
+        if (!LockStateMachine.INSTANCE.canTransit(state, State.EXPIRED)) return;
+        state = State.EXPIRED;
+        stopWatchdog();
+        log.warn("Lock [{}] expired for session {}", lockName, sessionId);
+        if (onExpiredCallback != null) onExpiredCallback.accept(lockName);
     }
 
     /** 标记锁已正常释放。 */
     void markReleased() {
+        if (!LockStateMachine.INSTANCE.canTransit(state, State.RELEASED)) return;
         state = State.RELEASED;
         stopWatchdog();
     }

@@ -1,8 +1,17 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server.mem;
 
@@ -10,6 +19,8 @@ import java.util.ArrayDeque;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Supplier;
+
+import com.hutulock.model.util.Numbers;
 
 /**
  * 两级对象池（Thread-Local 本地池 + 全局共享池）
@@ -40,9 +51,9 @@ import java.util.function.Supplier;
 public final class ObjectPool<T extends ObjectPool.Pooled> {
 
     /** 每个线程本地池的最大容量，超出后批量归还全局池 */
-    private static final int LOCAL_MAX = 32;
+    private static final int LOCAL_MAX = Numbers.POOL_LOCAL_MAX;
     /** 批量转移大小（补货/归还时每次转移的对象数） */
-    private static final int BATCH     = 16;
+    private static final int BATCH     = Numbers.POOL_BATCH;
 
     private final ArrayBlockingQueue<T> global;
     private final Supplier<T>           factory;

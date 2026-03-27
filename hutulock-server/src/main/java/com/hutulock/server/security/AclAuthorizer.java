@@ -1,8 +1,17 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server.security;
 
@@ -45,9 +54,24 @@ public class AclAuthorizer implements Authorizer {
 
     private static final Logger log = LoggerFactory.getLogger(AclAuthorizer.class);
 
-    private final List<AclRule> rules = new ArrayList<>();
+    private final List<AclRule>    rules = new ArrayList<>();
+    private final PatternMatcher   matcher;
     /** 无匹配规则时的默认行为，默认拒绝 */
     private boolean defaultAllow = false;
+
+    /** 使用默认通配符匹配策略。 */
+    public AclAuthorizer() {
+        this(PatternMatcher.WILDCARD);
+    }
+
+    /**
+     * 使用自定义匹配策略。
+     *
+     * @param matcher 模式匹配策略（{@link PatternMatcher#WILDCARD}、{@link PatternMatcher#REGEX} 或自定义）
+     */
+    public AclAuthorizer(PatternMatcher matcher) {
+        this.matcher = matcher;
+    }
 
     /**
      * 添加允许规则。
@@ -98,7 +122,7 @@ public class AclAuthorizer implements Authorizer {
     @Override
     public boolean isPermitted(String clientId, String lockName, Permission permission) {
         for (AclRule rule : rules) {
-            if (rule.matches(clientId, lockName, permission)) {
+            if (rule.matches(clientId, lockName, permission, matcher)) {
                 log.debug("ACL rule matched: client={}, lock={}, perm={}, allow={}",
                     clientId, lockName, permission, rule.allow);
                 return rule.allow;
@@ -124,21 +148,10 @@ public class AclAuthorizer implements Authorizer {
             this.allow         = allow;
         }
 
-        boolean matches(String clientId, String lockName, Permission perm) {
-            return matchesPattern(clientPattern, clientId)
-                && matchesPattern(lockPattern, lockName)
+        boolean matches(String clientId, String lockName, Permission perm, PatternMatcher matcher) {
+            return matcher.matches(clientPattern, clientId)
+                && matcher.matches(lockPattern, lockName)
                 && (permission == null || permission == perm);
-        }
-
-        /**
-         * 模式匹配：支持精确匹配、前缀通配符（{@code prefix*}）和全通配符（{@code *}）。
-         */
-        private static boolean matchesPattern(String pattern, String value) {
-            if ("*".equals(pattern)) return true;
-            if (pattern.endsWith("*")) {
-                return value.startsWith(pattern.substring(0, pattern.length() - 1));
-            }
-            return pattern.equals(value);
         }
     }
 }

@@ -1,12 +1,22 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server.security;
 
 import com.hutulock.spi.security.RateLimiter;
+import com.hutulock.model.util.Numbers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -75,15 +85,15 @@ public class TokenBucketRateLimiter implements RateLimiter {
         private volatile long lastRefillNanos;
 
         Bucket(long initialTokens) {
-            this.tokens         = new AtomicLong(initialTokens * 1000);
+            this.tokens          = new AtomicLong(initialTokens * Numbers.RATE_LIMITER_TOKEN_SCALE);
             this.lastRefillNanos = System.nanoTime();
         }
 
         synchronized boolean tryConsume(double tokensPerSecond, long capacity) {
             refill(tokensPerSecond, capacity);
             long current = tokens.get();
-            if (current >= 1000) { // 1000 代表 1 个令牌
-                tokens.addAndGet(-1000);
+            if (current >= Numbers.RATE_LIMITER_TOKEN_SCALE) {
+                tokens.addAndGet(-Numbers.RATE_LIMITER_TOKEN_SCALE);
                 return true;
             }
             return false;
@@ -94,10 +104,10 @@ public class TokenBucketRateLimiter implements RateLimiter {
             long elapsed = now - lastRefillNanos;
             if (elapsed <= 0) return;
 
-            // 计算应补充的令牌数（乘以 1000）
-            long toAdd = (long)(elapsed * tokensPerSecond / 1_000_000_000.0 * 1000);
+            // 计算应补充的令牌数（乘以 RATE_LIMITER_TOKEN_SCALE）
+            long toAdd = (long)(elapsed * tokensPerSecond / 1_000_000_000.0 * Numbers.RATE_LIMITER_TOKEN_SCALE);
             if (toAdd > 0) {
-                long newTokens = Math.min(tokens.get() + toAdd, capacity * 1000L);
+                long newTokens = Math.min(tokens.get() + toAdd, capacity * Numbers.RATE_LIMITER_TOKEN_SCALE);
                 tokens.set(newTokens);
                 lastRefillNanos = now;
             }

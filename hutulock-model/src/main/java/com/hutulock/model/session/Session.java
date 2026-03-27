@@ -1,10 +1,21 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.model.session;
+
+import com.hutulock.model.exception.HutuLockException;
 
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -47,7 +58,15 @@ public final class Session {
             && System.currentTimeMillis() - lastHeartbeat.get() > timeoutMs;
     }
 
-    public void transitionTo(State newState) { this.state = newState; }
+    /**
+     * 执行状态转换，非法转换抛出 {@link HutuLockException}。
+     *
+     * @throws HutuLockException 若转换不合法
+     */
+    public void transitionTo(State newState) {
+        SessionStateMachine.INSTANCE.transit(this.state, newState);
+        this.state = newState;
+    }
 
     public String getSessionId()     { return sessionId;           }
     public String getClientId()      { return clientId;            }

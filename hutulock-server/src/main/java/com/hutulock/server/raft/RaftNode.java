@@ -1,12 +1,24 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server.raft;
 
 import com.hutulock.config.api.ServerProperties;
+import com.hutulock.model.util.Numbers;
+import com.hutulock.model.util.RaftMessageType;
+import com.hutulock.model.util.Strings;
 import com.hutulock.server.api.RaftStateMachine;
 import com.hutulock.server.ioc.Lifecycle;
 import com.hutulock.spi.event.EventBus;
@@ -67,7 +79,7 @@ public class RaftNode implements Lifecycle {
     private final RaftReplication replication;
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "hutulock-raft-scheduler");
+        Thread t = new Thread(r, Strings.THREAD_RAFT_SCHEDULER);
         t.setDaemon(true);
         return t;
     });
@@ -96,7 +108,7 @@ public class RaftNode implements Lifecycle {
 
         this.state = (dataDir != null) ? new RaftState(dataDir) : new RaftState();
 
-        this.replication = new RaftReplication(nodeId, state, stateMachine, props, metrics, eventBus);
+        this.replication = new RaftReplication(nodeId, state, stateMachine, props, metrics, eventBus, scheduler);
         this.election    = new RaftElection(nodeId, state, props, metrics, eventBus, scheduler, replication);
         this.replication.setElection(election);
 
@@ -138,9 +150,11 @@ public class RaftNode implements Lifecycle {
         replayOnRestart();
         startRaftServer();
         election.resetElectionTimer();
-        scheduler.scheduleAtFixedRate(replication::cleanupTimedOutProposes, 1, 1, TimeUnit.SECONDS);
+        scheduler.scheduleAtFixedRate(replication::cleanupTimedOutProposes,
+            Numbers.RAFT_CLEANUP_INTERVAL_SEC, Numbers.RAFT_CLEANUP_INTERVAL_SEC, TimeUnit.SECONDS);
         // 定期快照：每 30s 检查一次，日志超过 1000 条时触发
-        scheduler.scheduleAtFixedRate(this::maybeSnapshot, 30, 30, TimeUnit.SECONDS);
+        scheduler.scheduleAtFixedRate(this::maybeSnapshot,
+            Numbers.RAFT_SNAPSHOT_INTERVAL_SEC, Numbers.RAFT_SNAPSHOT_INTERVAL_SEC, TimeUnit.SECONDS);
         log.info("Raft node [{}] started on port {}, lastApplied={}", nodeId, raftPort, state.lastApplied);
     }
 
@@ -220,16 +234,20 @@ public class RaftNode implements Lifecycle {
         }
         int spaceIdx = msg.indexOf(' ');
         String type = spaceIdx > 0 ? msg.substring(0, spaceIdx) : msg;
+        RaftMessageType msgType = RaftMessageType.of(msg);
         try {
-            switch (type) {
-                case "VOTE_REQ":    election.handleVoteReq(msg, channel);       break;
-                case "VOTE_RESP":   election.handleVoteResp(msg);               break;
-                case "APPEND_REQ":  replication.handleAppendReq(msg, channel);  break;
-                case "APPEND_RESP": replication.handleAppendResp(msg);          break;
-                default: log.warn("Unknown peer message type: {}", type);
+            if (msgType == null) {
+                log.warn("Unknown peer message type: {}", type);
+                return;
+            }
+            switch (msgType) {
+                case VOTE_REQ:    election.handleVoteReq(msg, channel);       break;
+                case VOTE_RESP:   election.handleVoteResp(msg);               break;
+                case APPEND_REQ:  replication.handleAppendReq(msg, channel);  break;
+                case APPEND_RESP: replication.handleAppendResp(msg);          break;
             }
         } catch (Exception e) {
-            log.error("Error handling peer message type={}: {}", type, e.getMessage(), e);
+            log.error("Error handling peer message type={}: {}", RaftMessageType.of(msg), e.getMessage(), e);
         }
     }
 
@@ -270,7 +288,7 @@ public class RaftNode implements Lifecycle {
      * 检查是否需要触发快照（日志条数超过阈值时）。
      * 只有 Leader 触发，避免多节点同时写快照。
      */
-    private static final int SNAPSHOT_LOG_THRESHOLD = 1000;
+    private static final int SNAPSHOT_LOG_THRESHOLD = Numbers.RAFT_SNAPSHOT_LOG_THRESHOLD;
 
     private void maybeSnapshot() {
         if (state.role != Role.LEADER) return;

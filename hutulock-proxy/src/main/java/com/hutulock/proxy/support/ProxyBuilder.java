@@ -1,11 +1,21 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.proxy.support;
 
+import com.hutulock.proxy.handler.BackoffStrategy;
 import com.hutulock.proxy.handler.LoggingHandler;
 import com.hutulock.proxy.handler.MetricsHandler;
 import com.hutulock.proxy.handler.RetryHandler;
@@ -78,21 +88,36 @@ public final class ProxyBuilder<T> {
     }
 
     /**
-     * 添加重试代理层。
+     * 添加重试代理层（自定义退避策略）。
      *
-     * @param maxRetries    最大重试次数
-     * @param backoffMs     每次重试前等待时间（ms）
-     * @param retryOn       可重试异常类型
+     * @param maxRetries     最大重试次数
+     * @param backoff        退避策略（{@link BackoffStrategy#fixed}、{@link BackoffStrategy#exponential}、{@link BackoffStrategy#jitter}）
      * @param noRetryMethods 不参与重试的方法名（如 release、shutdown）
+     * @param retryOn        可重试异常类型
+     */
+    @SafeVarargs
+    public final ProxyBuilder<T> withRetry(int maxRetries, BackoffStrategy backoff,
+                                            Set<String> noRetryMethods,
+                                            Class<? extends Throwable>... retryOn) {
+        Set<Class<? extends Throwable>> retrySet = new HashSet<>(Arrays.asList(retryOn));
+        if (retrySet.isEmpty()) retrySet.add(RuntimeException.class);
+        current = newProxy(new RetryHandler(current, maxRetries, backoff, retrySet, noRetryMethods));
+        return this;
+    }
+
+    /**
+     * 添加重试代理层（固定间隔退避，兼容旧 API）。
+     *
+     * @param maxRetries     最大重试次数
+     * @param backoffMs      固定等待时间（ms）
+     * @param noRetryMethods 不参与重试的方法名
+     * @param retryOn        可重试异常类型
      */
     @SafeVarargs
     public final ProxyBuilder<T> withRetry(int maxRetries, long backoffMs,
                                             Set<String> noRetryMethods,
                                             Class<? extends Throwable>... retryOn) {
-        Set<Class<? extends Throwable>> retrySet = new HashSet<>(Arrays.asList(retryOn));
-        if (retrySet.isEmpty()) retrySet.add(RuntimeException.class);
-        current = newProxy(new RetryHandler(current, maxRetries, backoffMs, retrySet, noRetryMethods));
-        return this;
+        return withRetry(maxRetries, BackoffStrategy.fixed(backoffMs), noRetryMethods, retryOn);
     }
 
     /**

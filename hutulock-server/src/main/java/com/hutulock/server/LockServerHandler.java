@@ -1,8 +1,17 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server;
 
@@ -12,6 +21,7 @@ import com.hutulock.model.protocol.Message;
 import com.hutulock.model.session.Session;
 import com.hutulock.spi.session.SessionTracker;
 import com.hutulock.config.api.ServerProperties;
+import com.hutulock.model.util.Strings;
 import com.hutulock.server.impl.DefaultLockManager;
 import com.hutulock.server.raft.RaftNode;
 import io.netty.channel.ChannelHandler;
@@ -46,7 +56,7 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
     private static final Logger log = LoggerFactory.getLogger(LockServerHandler.class);
 
     /** Channel 属性 Key，存储当前连接的 sessionId */
-    static final AttributeKey<String> SESSION_ID_KEY = AttributeKey.valueOf("hutulock.sessionId");
+    static final AttributeKey<String> SESSION_ID_KEY = AttributeKey.valueOf(Strings.ATTR_SESSION_ID);
 
     private final DefaultLockManager lockManager;
     private final SessionTracker     sessionTracker;
@@ -120,7 +130,7 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
         if (!raftNode.isLeader()) {
             String leader = raftNode.getLeaderId();
             ctx.writeAndFlush(
-                Message.of(CommandType.REDIRECT, leader != null ? leader : "UNKNOWN").serialize() + "\n");
+                    Message.of(CommandType.REDIRECT, leader != null ? leader : Strings.UNKNOWN_LEADER).serialize() + Strings.MSG_LINE_END);
             log.debug("Redirecting to leader: {}", leader);
             return;
         }
@@ -130,16 +140,28 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
     // ==================== 读操作（本地处理） ====================
 
     private void handleRecheck(ChannelHandlerContext ctx, Message msg) {
-        // BUG-FIX 3: RECHECK 是客户端收到 WATCH_EVENT 后重新检查锁顺序的操作。
-        // 它只读取 ZNode 树（getChildren），不修改状态，因此不需要走 Raft。
-        // 但必须保证与 apply() 的互斥：recheckLock 已加 synchronized，安全。
-        // 注意：Follower 节点的 ZNode 树可能落后于 Leader，
-        // 客户端应只连接 Leader（通过 REDIRECT 保证），所以这里是安全的。
+        // 验证 sessionId 归属：消息中的 sessionId 必须与当前连接一致
+        String connectedSessionId = ctx.channel().attr(SESSION_ID_KEY).get();
+        String requestedSessionId = msg.arg(2);
+        if (connectedSessionId == null || !connectedSessionId.equals(requestedSessionId)) {
+            log.warn("RECHECK sessionId mismatch: connected={}, requested={}, addr={}",
+                connectedSessionId, requestedSessionId, ctx.channel().remoteAddress());
+            ctx.writeAndFlush(Message.of(CommandType.ERROR, "session mismatch").serialize() + "\n");
+            return;
+        }
         lockManager.recheckLock(msg.arg(0), msg.arg(1), msg.arg(2));
     }
 
     private void handleRenew(ChannelHandlerContext ctx, Message msg) {
-        // RENEW lockName sessionId
+        // 验证 sessionId 归属
+        String connectedSessionId = ctx.channel().attr(SESSION_ID_KEY).get();
+        String requestedSessionId = msg.arg(1);
+        if (connectedSessionId == null || !connectedSessionId.equals(requestedSessionId)) {
+            log.warn("RENEW sessionId mismatch: connected={}, requested={}, addr={}",
+                connectedSessionId, requestedSessionId, ctx.channel().remoteAddress());
+            ctx.writeAndFlush(Message.of(CommandType.ERROR, "session mismatch").serialize() + "\n");
+            return;
+        }
         lockManager.renew(msg.arg(0), msg.arg(1));
         ctx.writeAndFlush(Message.of(CommandType.RENEWED, msg.arg(0)).serialize() + "\n");
     }

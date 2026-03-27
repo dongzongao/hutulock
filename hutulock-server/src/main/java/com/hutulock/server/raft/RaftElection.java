@@ -1,12 +1,23 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server.raft;
 
 import com.hutulock.config.api.ServerProperties;
+import com.hutulock.model.util.Numbers;
+import com.hutulock.model.util.Strings;
 import com.hutulock.spi.event.EventBus;
 import com.hutulock.spi.event.RaftEvent;
 import com.hutulock.spi.metrics.MetricsCollector;
@@ -56,7 +67,7 @@ public final class RaftElection {
     /** 连续选举失败计数（超过上限后退回 FOLLOWER 等待，防止无限选举） */
     private int consecutiveElections = 0;
     /** 单轮选举最大连续次数，超过后强制冷却一个完整超时周期 */
-    private static final int MAX_CONSECUTIVE_ELECTIONS = 10;
+    private static final int MAX_CONSECUTIVE_ELECTIONS = Numbers.RAFT_MAX_CONSECUTIVE_ELECTIONS;
 
     private ScheduledFuture<?> electionTimer;
     private ScheduledFuture<?> heartbeatTimer;
@@ -114,13 +125,13 @@ public final class RaftElection {
             log.warn("Node [{}] reached max consecutive elections ({}), cooling down for one timeout period",
                 nodeId, MAX_CONSECUTIVE_ELECTIONS);
             consecutiveElections = 0;
-            state.role = RaftNode.Role.FOLLOWER;
+            RaftRoleStateMachine.INSTANCE.tryTransit(state, RaftNode.Role.FOLLOWER);
             resetElectionTimer();
             return;
         }
 
         state.currentTerm++;
-        state.role     = RaftNode.Role.CANDIDATE;
+        RaftRoleStateMachine.INSTANCE.tryTransit(state, RaftNode.Role.CANDIDATE);
         state.votedFor = nodeId;
         state.voteCount.set(1);
         state.persistMeta(); // Raft §5.4：term/votedFor 必须在发送 RPC 前持久化
@@ -146,7 +157,7 @@ public final class RaftElection {
      * 格式：{@code VOTE_REQ {term} {nodeId} {lastLogIndex} {lastLogTerm}}
      */
     private String buildVoteReq() {
-        return new StringBuilder(64)
+        return new StringBuilder(Numbers.MSG_BUILDER_MEDIUM)
             .append("VOTE_REQ ")
             .append(state.currentTerm).append(' ')
             .append(nodeId).append(' ')
@@ -164,7 +175,7 @@ public final class RaftElection {
      */
     synchronized void becomeLeader() {
         if (state.role != RaftNode.Role.CANDIDATE) return;
-        state.role        = RaftNode.Role.LEADER;
+        RaftRoleStateMachine.INSTANCE.tryTransit(state, RaftNode.Role.LEADER);
         state.leaderId    = nodeId;
         state.leaderReady = false;          // 进入同步阶段，暂不开放 propose
         state.syncAckCount.set(1);          // 自身算一票
@@ -246,7 +257,7 @@ public final class RaftElection {
 
         if (term > state.currentTerm) {
             state.currentTerm = term;
-            state.role        = RaftNode.Role.FOLLOWER;
+            RaftRoleStateMachine.INSTANCE.tryTransit(state, RaftNode.Role.FOLLOWER);
             state.votedFor    = null;
             state.persistMeta();
             replication.failPendingProposesOnStepDown();
@@ -285,7 +296,7 @@ public final class RaftElection {
 
         if (term > state.currentTerm) {
             state.currentTerm = term;
-            state.role        = RaftNode.Role.FOLLOWER;
+            RaftRoleStateMachine.INSTANCE.tryTransit(state, RaftNode.Role.FOLLOWER);
             state.persistMeta();
             replication.failPendingProposesOnStepDown();
             return;
@@ -330,11 +341,11 @@ public final class RaftElection {
      * 构建 VOTE_RESP 消息，避免字符串拼接产生中间对象。
      */
     private static String buildVoteResp(int term, boolean granted) {
-        return new StringBuilder(32)
+        return new StringBuilder(Numbers.MSG_BUILDER_SMALL)
             .append("VOTE_RESP ")
             .append(term).append(' ')
             .append(granted)
-            .append('\n')
+            .append(Strings.MSG_LINE_END)
             .toString();
     }
 }

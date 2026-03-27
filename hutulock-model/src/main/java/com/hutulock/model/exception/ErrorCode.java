@@ -1,8 +1,17 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.model.exception;
 
@@ -43,6 +52,8 @@ public enum ErrorCode {
     NODE_ALREADY_EXISTS(5002, "ZNode already exists"),
     PARENT_NOT_FOUND(5003, "Parent ZNode does not exist"),
     VERSION_MISMATCH(5004, "ZNode version mismatch"),
+
+    INVALID_STATE(8001, "Illegal state transition"),
 
     CONNECTION_FAILED(9001, "Failed to connect to server"),
     UNKNOWN(9999, "Unknown error");

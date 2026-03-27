@@ -1,12 +1,23 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server.raft;
 
 import com.hutulock.config.api.ServerProperties;
+import com.hutulock.model.util.Numbers;
+import com.hutulock.model.util.Strings;
 import com.hutulock.server.api.RaftStateMachine;
 import com.hutulock.spi.event.EventBus;
 import com.hutulock.spi.event.RaftEvent;
@@ -18,6 +29,8 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 import java.util.StringJoiner;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -49,6 +62,7 @@ public final class RaftReplication {
     private final ServerProperties props;
     private final MetricsCollector metrics;
     private final EventBus         eventBus;
+    private final ScheduledExecutorService scheduler;
 
     /** 快照管理器，null 表示不启用快照（内存模式）。 */
     private com.hutulock.server.persistence.SnapshotManager snapshotManager;
@@ -57,13 +71,15 @@ public final class RaftReplication {
     private RaftElection election;
 
     public RaftReplication(String nodeId, RaftState state, RaftStateMachine stateMachine,
-                           ServerProperties props, MetricsCollector metrics, EventBus eventBus) {
+                           ServerProperties props, MetricsCollector metrics, EventBus eventBus,
+                           ScheduledExecutorService scheduler) {
         this.nodeId       = nodeId;
         this.state        = state;
         this.stateMachine = stateMachine;
         this.props        = props;
         this.metrics      = metrics;
         this.eventBus     = eventBus;
+        this.scheduler    = scheduler;
     }
 
     public void setElection(RaftElection election) {
@@ -134,30 +150,29 @@ public final class RaftReplication {
         return doPropose(command);
     }
 
-    /** 非 Leader 时的重试逻辑，异步延迟重试不阻塞 Raft 调度线程。 */
+    /** 非 Leader 时的重试逻辑，用 Raft 调度器延迟重试，不占用 ForkJoinPool 公共线程。 */
     private CompletableFuture<Void> proposeWithRetry(String command, int remainingRetries) {
         CompletableFuture<Void> result = new CompletableFuture<>();
-        CompletableFuture.delayedExecutor(props.proposeRetryDelayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-            .execute(() -> {
-                synchronized (RaftReplication.this) {
-                    if (state.role == RaftNode.Role.LEADER) {
-                        doPropose(command).whenComplete((v, ex) -> {
-                            if (ex != null) result.completeExceptionally(ex);
-                            else result.complete(null);
-                        });
-                    } else if (remainingRetries > 1) {
-                        log.debug("propose retry, remaining={}, leader={}", remainingRetries - 1, state.leaderId);
-                        proposeWithRetry(command, remainingRetries - 1).whenComplete((v, ex) -> {
-                            if (ex != null) result.completeExceptionally(ex);
-                            else result.complete(null);
-                        });
-                    } else {
-                        metrics.onRaftProposeRejected();
-                        result.completeExceptionally(
-                            new IllegalStateException("NOT_LEADER after retries:" + state.leaderId));
-                    }
+        scheduler.schedule(() -> {
+            synchronized (RaftReplication.this) {
+                if (state.role == RaftNode.Role.LEADER) {
+                    doPropose(command).whenComplete((v, ex) -> {
+                        if (ex != null) result.completeExceptionally(ex);
+                        else result.complete(null);
+                    });
+                } else if (remainingRetries > 1) {
+                    log.debug("propose retry, remaining={}, leader={}", remainingRetries - 1, state.leaderId);
+                    proposeWithRetry(command, remainingRetries - 1).whenComplete((v, ex) -> {
+                        if (ex != null) result.completeExceptionally(ex);
+                        else result.complete(null);
+                    });
+                } else {
+                    metrics.onRaftProposeRejected();
+                    result.completeExceptionally(
+                        new IllegalStateException("NOT_LEADER after retries:" + state.leaderId));
                 }
-            });
+            }
+        }, props.proposeRetryDelayMs, TimeUnit.MILLISECONDS);
         return result;
     }
 
@@ -217,18 +232,19 @@ public final class RaftReplication {
         int prevTerm  = state.raftLog.termAt(prevIndex);
         List<RaftLog.Entry> entries = state.raftLog.getFrom(peer.nextIndex);
 
-        StringBuilder sb = new StringBuilder(128);
+        StringBuilder sb = new StringBuilder(Numbers.MSG_BUILDER_LARGE);
         sb.append("APPEND_REQ ")
           .append(state.currentTerm).append(' ').append(nodeId)
           .append(' ').append(prevIndex).append(' ').append(prevTerm)
           .append(' ').append(state.commitIndex).append(' ');
 
         if (entries.isEmpty()) {
-            sb.append("EMPTY");
+            sb.append(Strings.ENTRY_EMPTY);
         } else {
-            StringJoiner joiner = new StringJoiner("|");
+            StringJoiner joiner = new StringJoiner(Strings.ENTRY_DELIMITER);
             for (RaftLog.Entry e : entries) {
-                joiner.add(e.index + ":" + e.term + ":" + e.command.replace("|", "\\|"));
+                joiner.add(e.index + Strings.ENTRY_FIELD_SEP + e.term + Strings.ENTRY_FIELD_SEP
+                    + e.command.replace(Strings.ENTRY_DELIMITER, "\\" + Strings.ENTRY_DELIMITER));
             }
             sb.append(joiner);
         }
@@ -286,7 +302,7 @@ public final class RaftReplication {
         }
         state.currentTerm = term;
         state.leaderId    = leader;
-        state.role        = RaftNode.Role.FOLLOWER;
+        RaftRoleStateMachine.INSTANCE.tryTransit(state, RaftNode.Role.FOLLOWER);
         state.persistMeta(); // term 可能更新，持久化
         election.resetElectionTimer();
 
@@ -300,7 +316,7 @@ public final class RaftReplication {
             return;
         }
 
-        if (!"EMPTY".equals(entriesStr)) {
+        if (!Strings.ENTRY_EMPTY.equals(entriesStr)) {
             appendEntries(entriesStr);
         }
 
@@ -314,23 +330,24 @@ public final class RaftReplication {
     /** 统一构建并发送 APPEND_RESP，避免散落的字符串拼接。 */
     private void sendAppendResp(Channel ch, int term, boolean success,
                                 int matchIndex, int conflictTerm, int conflictIndex) {
-        StringBuilder sb = new StringBuilder(64)
+        StringBuilder sb = new StringBuilder(Numbers.MSG_BUILDER_MEDIUM)
             .append("APPEND_RESP ").append(term)
             .append(' ').append(success)
             .append(' ').append(matchIndex)
             .append(' ').append(nodeId)
             .append(' ').append(conflictTerm)
             .append(' ').append(conflictIndex)
-            .append('\n');
+            .append(Strings.MSG_LINE_END);
         ch.writeAndFlush(sb.toString());
     }
 
     /** 解析并追加日志条目，处理冲突截断。 */
     private void appendEntries(String entriesStr) {
         final String PLACEHOLDER = "\u0000";
-        String[] parts = entriesStr.replace("\\|", PLACEHOLDER).split("\\|");
+        String[] parts = entriesStr.replace("\\" + Strings.ENTRY_DELIMITER, PLACEHOLDER)
+            .split("\\" + Strings.ENTRY_DELIMITER);
         for (String es : parts) {
-            String[] ep    = es.split(":", 3);
+            String[] ep    = es.split(Strings.ENTRY_FIELD_SEP, 3);
             int      eIdx  = Integer.parseInt(ep[0]);
             int      eTerm = Integer.parseInt(ep[1]);
             String   eCmd  = ep[2].replace(PLACEHOLDER, "|");
@@ -380,7 +397,7 @@ public final class RaftReplication {
 
         if (term > state.currentTerm) {
             state.currentTerm = term;
-            state.role        = RaftNode.Role.FOLLOWER;
+            RaftRoleStateMachine.INSTANCE.tryTransit(state, RaftNode.Role.FOLLOWER);
             state.persistMeta();
             failPendingProposesOnStepDown();
             return;

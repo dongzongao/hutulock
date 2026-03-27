@@ -1,11 +1,21 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server.mem;
 
+import com.hutulock.model.util.Numbers;
 import com.hutulock.server.ioc.Lifecycle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,7 +45,7 @@ public final class MemoryManager implements Lifecycle {
     private static final Logger log = LoggerFactory.getLogger(MemoryManager.class);
 
     /** LockToken 对象池容量（建议 = 预期并发锁数 × 2） */
-    private static final int LOCK_TOKEN_POOL_SIZE = 1024;
+    private static final int LOCK_TOKEN_POOL_SIZE = Numbers.LOCK_TOKEN_POOL_SIZE;
 
     private final ZNodePathCache              pathCache;
     private final ObjectPool<PooledLockToken> lockTokenPool;

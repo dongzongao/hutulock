@@ -1,8 +1,17 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server.impl;
 
@@ -11,6 +20,7 @@ import com.hutulock.model.protocol.Message;
 import com.hutulock.model.znode.ZNode;
 import com.hutulock.model.znode.ZNodePath;
 import com.hutulock.model.znode.ZNodeType;
+import com.hutulock.model.util.Strings;
 import com.hutulock.spi.event.EventBus;
 import com.hutulock.spi.event.LockEvent;
 import com.hutulock.spi.lock.LockService;
@@ -38,8 +48,8 @@ public class DefaultLockManager implements LockService, RaftStateMachine {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultLockManager.class);
 
-    private static final String LOCKS_ROOT = "/locks";
-    private static final String SEQ_PREFIX = "seq-";
+    private static final String LOCKS_ROOT = Strings.LOCKS_ROOT;
+    private static final String SEQ_PREFIX = Strings.SEQ_PREFIX;
 
     private final ZNodeStorage   zNodeStorage;
     private final SessionTracker sessionTracker;

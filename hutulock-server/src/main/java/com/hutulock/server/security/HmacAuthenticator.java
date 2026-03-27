@@ -1,8 +1,17 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server.security;
 
@@ -93,9 +102,9 @@ public class HmacAuthenticator implements Authenticator {
             return AuthResult.failure("timestamp out of replay window");
         }
 
-        // 3. 验证签名
+        // 3. 验证签名（常量时间比较，防止时序攻击）
         String expectedSig = computeHmac(secretKey, clientId + ":" + timestamp);
-        if (expectedSig == null || !expectedSig.equals(signature)) {
+        if (expectedSig == null || !constantTimeEquals(expectedSig, signature)) {
             log.warn("HMAC auth failed: invalid signature for clientId={}", clientId);
             return AuthResult.failure("invalid HMAC signature");
         }
@@ -121,5 +130,18 @@ public class HmacAuthenticator implements Authenticator {
             log.error("HMAC computation failed", e);
             return null;
         }
+    }
+
+    /**
+     * 常量时间字符串比较，防止时序攻击（Timing Attack）。
+     */
+    private static boolean constantTimeEquals(String a, String b) {
+        if (a == null || b == null) return false;
+        if (a.length() != b.length()) return false;
+        int result = 0;
+        for (int i = 0; i < a.length(); i++) {
+            result |= a.charAt(i) ^ b.charAt(i);
+        }
+        return result == 0;
     }
 }

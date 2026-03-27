@@ -1,8 +1,17 @@
 /*
- * Copyright 2024 HutuLock Authors
+ * Copyright 2026 HutuLock Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.hutulock.server.metrics;
 
@@ -44,19 +53,30 @@ public class MetricsHttpServer implements Lifecycle {
     private final int                       port;
     private final String                    nodeId;
     private final PrometheusMetricsCollector collector;
+    /** 允许访问 /metrics 的 IP 白名单，空表示仅允许 localhost */
+    private final java.util.Set<String>     allowedHosts;
     private HttpServer                      server;
 
     /**
-     * 构造 Metrics HTTP 服务器。
-     *
-     * @param port      监听端口
-     * @param nodeId    节点 ID（用于健康检查响应）
-     * @param collector Prometheus 收集器
+     * 构造 Metrics HTTP 服务器（仅允许 localhost 访问）。
      */
     public MetricsHttpServer(int port, String nodeId, PrometheusMetricsCollector collector) {
-        this.port      = port;
-        this.nodeId    = nodeId;
-        this.collector = collector;
+        this(port, nodeId, collector, java.util.Set.of("127.0.0.1", "0:0:0:0:0:0:0:1", "::1"));
+    }
+
+    /**
+     * 构造 Metrics HTTP 服务器（自定义 IP 白名单）。
+     *
+     * @param allowedHosts 允许访问的 IP 集合，null 或空表示仅 localhost
+     */
+    public MetricsHttpServer(int port, String nodeId, PrometheusMetricsCollector collector,
+                              java.util.Set<String> allowedHosts) {
+        this.port         = port;
+        this.nodeId       = nodeId;
+        this.collector    = collector;
+        this.allowedHosts = allowedHosts != null && !allowedHosts.isEmpty()
+            ? allowedHosts
+            : java.util.Set.of("127.0.0.1", "0:0:0:0:0:0:0:1", "::1");
     }
 
     /**
@@ -67,8 +87,14 @@ public class MetricsHttpServer implements Lifecycle {
     public void start() throws IOException {
         server = HttpServer.create(new InetSocketAddress(port), 0);
 
-        // GET /metrics — Prometheus scrape endpoint
+        // GET /metrics — Prometheus scrape endpoint（仅允许白名单 IP）
         server.createContext("/metrics", exchange -> {
+            String remoteIp = exchange.getRemoteAddress().getAddress().getHostAddress();
+            if (!allowedHosts.contains(remoteIp)) {
+                log.warn("Metrics access denied from {}", remoteIp);
+                exchange.sendResponseHeaders(403, -1);
+                return;
+            }
             if (!"GET".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
