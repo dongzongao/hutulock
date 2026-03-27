@@ -7,7 +7,17 @@
 ```
 GET http://localhost:9090/metrics   # Prometheus scrape
 GET http://localhost:9090/health    # 健康检查
+GET http://localhost:9091/          # Web 管理控制台（需登录）
 ```
+
+**端口说明：**
+
+| 端口 | 用途 | 配置项 |
+|------|------|--------|
+| 8881 | 客户端连接 | 启动参数 `clientPort` |
+| 9881 | Raft 节点间通信 | 启动参数 `raftPort` |
+| 9090 | Prometheus Metrics | `metrics.port` |
+| 9091 | Web 管理控制台 | `admin.port` |
 
 **Prometheus 配置：**
 

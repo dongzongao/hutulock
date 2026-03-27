@@ -293,6 +293,75 @@ log.info(ProxyCatalog.describe());
 
 ---
 
+## Admin 控制台 API
+
+### 认证
+
+```bash
+# 登录，获取 token
+curl -X POST http://localhost:9091/api/admin/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+# → {"token":"xxx","username":"admin"}
+
+# 注销
+curl -X POST http://localhost:9091/api/admin/logout \
+  -H "Authorization: Bearer xxx"
+```
+
+### 集群状态
+
+```bash
+curl http://localhost:9091/api/admin/cluster \
+  -H "Authorization: Bearer xxx"
+```
+
+```json
+{
+  "nodeId": "node1",
+  "role": "LEADER",
+  "leaderId": "node1",
+  "configPhase": "NORMAL",
+  "members": ["node1", "node2", "node3"],
+  "peers": [
+    {"nodeId":"node2","host":"127.0.0.1","port":9882,"nextIndex":5,"matchIndex":4,"inFlight":false},
+    {"nodeId":"node3","host":"127.0.0.1","port":9883,"nextIndex":5,"matchIndex":4,"inFlight":false}
+  ],
+  "membershipChangePending": false
+}
+```
+
+### 动态成员变更
+
+```bash
+# 添加成员（触发 Joint Consensus 两阶段变更）
+curl -X POST http://localhost:9091/api/admin/members/add \
+  -H "Authorization: Bearer xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"nodeId":"node4","host":"127.0.0.1","port":9884}'
+# → {"status":"accepted","nodeId":"node4"}
+
+# 移除成员
+curl -X POST http://localhost:9091/api/admin/members/remove \
+  -H "Authorization: Bearer xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"nodeId":"node3"}'
+# → {"status":"accepted","nodeId":"node3"}
+```
+
+### 编程方式调用成员变更
+
+```java
+// 添加成员（返回 CompletableFuture，变更完成后 complete）
+CompletableFuture<Void> f = raftNode.addMember("node4", "127.0.0.1", 9884);
+f.get(30, TimeUnit.SECONDS); // 等待 Joint Consensus 完成
+
+// 移除成员
+raftNode.removeMember("node3").get(30, TimeUnit.SECONDS);
+```
+
+---
+
 | 错误码 | 值 | 说明 |
 |--------|-----|------|
 | INVALID_COMMAND | 1001 | 命令格式不合法 |
