@@ -50,6 +50,9 @@ public final class RaftReplication {
     private final MetricsCollector metrics;
     private final EventBus         eventBus;
 
+    /** 快照管理器，null 表示不启用快照（内存模式）。 */
+    private com.hutulock.server.persistence.SnapshotManager snapshotManager;
+
     /** 延迟注入，避免循环依赖 */
     private RaftElection election;
 
@@ -65,6 +68,25 @@ public final class RaftReplication {
 
     public void setElection(RaftElection election) {
         this.election = election;
+    }
+
+    public void setSnapshotManager(com.hutulock.server.persistence.SnapshotManager mgr) {
+        this.snapshotManager = mgr;
+    }
+
+    public RaftStateMachine getStateMachine() { return stateMachine; }
+
+    public com.hutulock.server.persistence.SnapshotManager getSnapshotManager() {
+        return snapshotManager;
+    }
+
+    /** 直接 apply 到状态机（重启重放专用，不更新 commitIndex/lastApplied）。 */
+    public void applyToStateMachine(int index, String command) {
+        try {
+            stateMachine.apply(index, command);
+        } catch (Exception e) {
+            log.error("Replay apply failed at index {}: {}", index, e.getMessage(), e);
+        }
     }
 
     // ==================== Propose ====================
@@ -265,6 +287,7 @@ public final class RaftReplication {
         state.currentTerm = term;
         state.leaderId    = leader;
         state.role        = RaftNode.Role.FOLLOWER;
+        state.persistMeta(); // term 可能更新，持久化
         election.resetElectionTimer();
 
         // 一致性检查：prevLogIndex 处的 term 必须匹配
@@ -358,6 +381,7 @@ public final class RaftReplication {
         if (term > state.currentTerm) {
             state.currentTerm = term;
             state.role        = RaftNode.Role.FOLLOWER;
+            state.persistMeta();
             failPendingProposesOnStepDown();
             return;
         }

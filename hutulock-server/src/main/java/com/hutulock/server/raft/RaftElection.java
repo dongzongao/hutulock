@@ -123,6 +123,7 @@ public final class RaftElection {
         state.role     = RaftNode.Role.CANDIDATE;
         state.votedFor = nodeId;
         state.voteCount.set(1);
+        state.persistMeta(); // Raft §5.4：term/votedFor 必须在发送 RPC 前持久化
 
         metrics.onRaftElectionStarted();
         log.info("Starting election, term={}", state.currentTerm);
@@ -247,6 +248,7 @@ public final class RaftElection {
             state.currentTerm = term;
             state.role        = RaftNode.Role.FOLLOWER;
             state.votedFor    = null;
+            state.persistMeta();
             replication.failPendingProposesOnStepDown();
         }
 
@@ -256,6 +258,7 @@ public final class RaftElection {
 
         if (granted) {
             state.votedFor = candidate;
+            state.persistMeta(); // 投票前持久化，防止重启后重复投票
             resetElectionTimer();
         }
 
@@ -283,6 +286,7 @@ public final class RaftElection {
         if (term > state.currentTerm) {
             state.currentTerm = term;
             state.role        = RaftNode.Role.FOLLOWER;
+            state.persistMeta();
             replication.failPendingProposesOnStepDown();
             return;
         }

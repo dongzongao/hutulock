@@ -200,4 +200,38 @@ public class DefaultZNodeTree implements ZNodeStorage {
     }
 
     @Override public int size() { return nodes.size(); }
+
+    /**
+     * 快照恢复专用：静默写入节点，不触发 Watcher、EventBus、Metrics。
+     * 仅由 {@link com.hutulock.server.snapshot.SnapshotManager} 调用。
+     */
+    public synchronized void restoreNode(ZNodePath path, ZNodeType type, byte[] data, String sessionId) {
+        // 确保父节点存在（快照按 BFS 顺序写入，父节点先于子节点）
+        if (!path.isRoot()) {
+            ZNodePath parent = path.parent();
+            if (!nodes.containsKey(parent.value())) {
+                // 父节点缺失时自动补全（防御性处理）
+                nodes.put(parent.value(), ZNode.builder(parent, ZNodeType.PERSISTENT).build());
+                children.computeIfAbsent(parent.value(),
+                    k -> Collections.synchronizedSortedSet(new TreeSet<>()));
+            }
+        }
+
+        ZNode node = ZNode.builder(path, type).data(data).sessionId(sessionId).build();
+        nodes.put(path.value(), node);
+        children.computeIfAbsent(path.value(),
+            k -> Collections.synchronizedSortedSet(new TreeSet<>()));
+
+        if (!path.isRoot()) {
+            children.computeIfAbsent(path.parent().value(),
+                k -> Collections.synchronizedSortedSet(new TreeSet<>()))
+                .add(path.value());
+        }
+
+        // 恢复临时节点的 session 反向索引
+        if (node.isEphemeral() && sessionId != null) {
+            sessionNodes.computeIfAbsent(sessionId, k -> ConcurrentHashMap.newKeySet())
+                        .add(path.value());
+        }
+    }
 }

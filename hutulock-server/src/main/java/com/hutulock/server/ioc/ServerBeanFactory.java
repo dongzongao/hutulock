@@ -160,12 +160,29 @@ public final class ServerBeanFactory {
             mgr.setNodeId(nodeId);
             return mgr;
         }));
-        ctx.register(BeanDefinition.of("raftNode", RaftNode.class,
-                () -> new RaftNode(nodeId, raftPort,
-                        ctx.getBean(DefaultLockManager.class),
-                        ctx.getBean(ServerProperties.class),
-                        ctx.getBean(MetricsCollector.class),
-                        ctx.getBean(EventBus.class))));
+
+        ctx.register(BeanDefinition.of("raftNode", RaftNode.class, () -> {
+            // dataDir 从系统属性读取，默认 ./data/{nodeId}
+            String dataDir = System.getProperty("hutulock.dataDir",
+                "data" + java.io.File.separator + nodeId);
+            RaftNode node = new RaftNode(nodeId, raftPort,
+                    ctx.getBean(DefaultLockManager.class),
+                    ctx.getBean(ServerProperties.class),
+                    ctx.getBean(MetricsCollector.class),
+                    ctx.getBean(EventBus.class),
+                    dataDir);
+
+            // 注入快照管理器（ZNodeTree 实现才支持快照）
+            ZNodeStorage storage = ctx.getBean(ZNodeStorage.class);
+            DefaultZNodeTree tree = (storage instanceof DefaultZNodeTree)
+                ? (DefaultZNodeTree) storage : null;
+            if (tree != null) {
+                com.hutulock.server.persistence.SnapshotManager snapMgr =
+                    new com.hutulock.server.persistence.SnapshotManager(dataDir);
+                node.setSnapshotManager(snapMgr, tree);
+            }
+            return node;
+        }));
 
         // ---- 7. 安全上下文 ----
         ctx.register(BeanDefinition.of("securityContext", SecurityContext.class, () -> {

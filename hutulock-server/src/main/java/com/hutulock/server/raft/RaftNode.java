@@ -62,7 +62,7 @@ public class RaftNode implements Lifecycle {
     private final ServerProperties props;
 
     /** 共享状态（选举 + 复制模块共用） */
-    private final RaftState       state       = new RaftState();
+    private final RaftState       state;
     private final RaftElection    election;
     private final RaftReplication replication;
 
@@ -75,26 +75,36 @@ public class RaftNode implements Lifecycle {
     private final EventLoopGroup raftGroup = new NioEventLoopGroup();
 
     /**
-     * 构造 Raft 节点。
-     *
-     * @param nodeId       节点 ID（集群内唯一）
-     * @param raftPort     Raft 节点间通信端口
-     * @param stateMachine 状态机实现
-     * @param props        服务端配置
-     * @param metrics      Metrics 收集器
-     * @param eventBus     事件总线
+     * 构造 Raft 节点（内存模式，测试用）。
      */
     public RaftNode(String nodeId, int raftPort, RaftStateMachine stateMachine,
                     ServerProperties props, MetricsCollector metrics, EventBus eventBus) {
+        this(nodeId, raftPort, stateMachine, props, metrics, eventBus, null);
+    }
+
+    /**
+     * 构造 Raft 节点（WAL 持久化模式）。
+     *
+     * @param dataDir WAL 和元数据存储目录，null 表示内存模式
+     */
+    public RaftNode(String nodeId, int raftPort, RaftStateMachine stateMachine,
+                    ServerProperties props, MetricsCollector metrics, EventBus eventBus,
+                    String dataDir) {
         this.nodeId   = nodeId;
         this.raftPort = raftPort;
         this.props    = props;
 
-        // 先构造 replication，再构造 election（election 需要 replication 引用）
+        this.state = (dataDir != null) ? new RaftState(dataDir) : new RaftState();
+
         this.replication = new RaftReplication(nodeId, state, stateMachine, props, metrics, eventBus);
         this.election    = new RaftElection(nodeId, state, props, metrics, eventBus, scheduler, replication);
-        // 反向注入，解除循环依赖
         this.replication.setElection(election);
+
+        if (dataDir != null) {
+            log.info("Raft node [{}] using persistent storage at {}", nodeId, dataDir);
+            log.info("Recovered state: term={}, votedFor={}, lastLogIndex={}",
+                state.currentTerm, state.votedFor, state.raftLog.lastIndex());
+        }
     }
 
     /** 添加集群节点并立即发起连接。 */
@@ -105,15 +115,84 @@ public class RaftNode implements Lifecycle {
     }
 
     /**
-     * 启动 Raft 节点：绑定端口、启动选举计时器、启动超时清理任务。
-     *
-     * @throws InterruptedException 线程中断
+     * 注入快照管理器（在 start() 之前调用）。
+     * 同时将 ZNodeTree 引用传给 replication，用于定期触发快照。
+     */
+    public void setSnapshotManager(com.hutulock.server.persistence.SnapshotManager snapMgr,
+                                    com.hutulock.server.impl.DefaultZNodeTree tree) {
+        replication.setSnapshotManager(snapMgr);
+        this.snapshotTree = tree;
+        log.info("SnapshotManager registered for node [{}]", nodeId);
+    }
+
+    private com.hutulock.server.impl.DefaultZNodeTree snapshotTree;
+
+    /**
+     * 启动 Raft 节点：
+     * 1. 若有快照，加载快照恢复状态机
+     * 2. 重放快照点之后的 WAL 日志
+     * 3. 绑定 Raft 端口
+     * 4. 启动选举计时器和超时清理任务
      */
     public void start() throws InterruptedException {
+        replayOnRestart();
         startRaftServer();
         election.resetElectionTimer();
         scheduler.scheduleAtFixedRate(replication::cleanupTimedOutProposes, 1, 1, TimeUnit.SECONDS);
-        log.info("Raft node [{}] started on port {}", nodeId, raftPort);
+        // 定期快照：每 30s 检查一次，日志超过 1000 条时触发
+        scheduler.scheduleAtFixedRate(this::maybeSnapshot, 30, 30, TimeUnit.SECONDS);
+        log.info("Raft node [{}] started on port {}, lastApplied={}", nodeId, raftPort, state.lastApplied);
+    }
+
+    /**
+     * 重启恢复：加载快照 + 重放增量日志。
+     *
+     * <p>流程：
+     * <pre>
+     *   1. SnapshotManager.load() → 恢复 ZNode 树到快照点
+     *   2. 从 snapshot.lastApplied+1 开始重放 WAL 日志
+     *   3. 更新 state.commitIndex / lastApplied
+     * </pre>
+     *
+     * <p>若无快照（首次启动或快照被删除），从日志索引 1 开始全量重放。
+     */
+    private void replayOnRestart() {
+        if (!(replication.getStateMachine() instanceof com.hutulock.server.impl.DefaultZNodeTree)) {
+            // 状态机不支持快照恢复（如测试用 mock），跳过
+            return;
+        }
+        com.hutulock.server.impl.DefaultZNodeTree tree =
+            (com.hutulock.server.impl.DefaultZNodeTree) replication.getStateMachine();
+
+        // 1. 加载快照
+        com.hutulock.server.persistence.SnapshotManager snapMgr = replication.getSnapshotManager();
+        int replayFrom = 1;
+        if (snapMgr != null) {
+            com.hutulock.server.persistence.SnapshotManager.SnapshotMeta meta = snapMgr.load(tree);
+            if (!meta.isEmpty()) {
+                state.commitIndex = meta.lastApplied;
+                state.lastApplied = meta.lastApplied;
+                replayFrom = meta.lastApplied + 1;
+                log.info("Snapshot loaded, replaying from logIndex={}", replayFrom);
+            }
+        }
+
+        // 2. 重放 WAL 中快照点之后的日志
+        int lastIdx = state.raftLog.lastIndex();
+        if (replayFrom > lastIdx) {
+            log.info("No incremental log to replay (lastIndex={})", lastIdx);
+            return;
+        }
+        log.info("Replaying log entries [{}, {}]", replayFrom, lastIdx);
+        for (int i = replayFrom; i <= lastIdx; i++) {
+            RaftLog.Entry entry = state.raftLog.get(i);
+            if (entry != null) {
+                replication.applyToStateMachine(entry.index, entry.command);
+            }
+        }
+        state.commitIndex = lastIdx;
+        state.lastApplied = lastIdx;
+        log.info("Replay complete, lastApplied={}", state.lastApplied);
     }
 
     // ==================== 公共 API ====================
@@ -184,6 +263,30 @@ public class RaftNode implements Lifecycle {
     public String  getLeaderId() { return state.leaderId;               }
     public boolean isLeader()    { return state.role == Role.LEADER;    }
     public ScheduledExecutorService getScheduler() { return scheduler;  }
+
+    // ==================== 快照 ====================
+
+    /**
+     * 检查是否需要触发快照（日志条数超过阈值时）。
+     * 只有 Leader 触发，避免多节点同时写快照。
+     */
+    private static final int SNAPSHOT_LOG_THRESHOLD = 1000;
+
+    private void maybeSnapshot() {
+        if (state.role != Role.LEADER) return;
+        com.hutulock.server.persistence.SnapshotManager snapMgr = replication.getSnapshotManager();
+        if (snapMgr == null || snapshotTree == null) return;
+
+        int logSize = state.raftLog.lastIndex();
+        if (logSize < SNAPSHOT_LOG_THRESHOLD) return;
+
+        try {
+            log.info("Triggering snapshot at lastApplied={}, logSize={}", state.lastApplied, logSize);
+            snapMgr.save(snapshotTree, state.lastApplied, state.currentTerm);
+        } catch (Exception e) {
+            log.error("Snapshot failed: {}", e.getMessage(), e);
+        }
+    }
 
     // ==================== 生命周期 ====================
 

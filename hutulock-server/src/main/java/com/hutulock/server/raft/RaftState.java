@@ -31,7 +31,35 @@ public final class RaftState {
     // ---- 持久化状态（重启后需恢复，当前为内存实现） ----
     public volatile int    currentTerm = 0;
     public volatile String votedFor    = null;
-    public final    RaftLog raftLog    = new RaftLog();
+    public final    RaftLog raftLog;
+
+    /** 元数据持久化（currentTerm + votedFor），null 表示内存模式。 */
+    public final com.hutulock.server.persistence.RaftMetaStore metaStore;
+
+    /** 无持久化（内存模式，测试用）。 */
+    public RaftState() {
+        this.raftLog   = new RaftLog();
+        this.metaStore = null;
+    }
+
+    /** WAL 持久化模式。 */
+    public RaftState(String dataDir) {
+        this.raftLog   = new RaftLog(dataDir);
+        this.metaStore = new com.hutulock.server.persistence.RaftMetaStore(dataDir);
+        com.hutulock.server.persistence.RaftMetaStore.Meta meta = metaStore.load();
+        this.currentTerm = meta.currentTerm;
+        this.votedFor    = meta.votedFor;
+    }
+
+    /**
+     * 持久化 currentTerm 和 votedFor（Raft §5.4 要求在响应 RPC 前完成）。
+     * 内存模式下为空操作。
+     */
+    public void persistMeta() {
+        if (metaStore != null) {
+            metaStore.persist(currentTerm, votedFor);
+        }
+    }
 
     // ---- 易失状态 ----
     public volatile int    commitIndex = 0;
