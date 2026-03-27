@@ -147,10 +147,18 @@ public class DefaultLockManager implements LockService, RaftStateMachine {
     }
 
     private ZNodePath findPrevNode(List<ZNodePath> sorted, ZNodePath myPath) {
-        for (int i = 1; i < sorted.size(); i++) {
-            if (sorted.get(i).equals(myPath)) return sorted.get(i - 1);
+        // 二分查找替代线性扫描，O(log n) 而非 O(n)
+        // sorted 已按字典序排列（getChildren 保证），ZNodePath 实现 Comparable
+        int lo = 1, hi = sorted.size() - 1, pos = -1;
+        String target = myPath.value();
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int cmp = sorted.get(mid).value().compareTo(target);
+            if (cmp == 0) { pos = mid; break; }
+            else if (cmp < 0) lo = mid + 1;
+            else hi = mid - 1;
         }
-        return sorted.get(0);
+        return pos > 0 ? sorted.get(pos - 1) : sorted.get(0);
     }
 
     private void applyUnlock(String seqNodePath, String sessionId) {

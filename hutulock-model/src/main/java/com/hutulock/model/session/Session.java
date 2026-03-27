@@ -54,6 +54,8 @@ public final class Session {
     public long   getTimeoutMs()     { return timeoutMs;           }
     public State  getState()         { return state;               }
     public long   getLastHeartbeat() { return lastHeartbeat.get(); }
+    /** 预计过期时间戳（毫秒），用于优先队列排序。 */
+    public long   getExpireTime()    { return lastHeartbeat.get() + timeoutMs; }
     public boolean isAlive() {
         return state == State.CONNECTED || state == State.RECONNECTING;
     }

@@ -36,6 +36,11 @@ public class DefaultWatcherRegistry implements WatcherRegistry {
 
     /** path.value() → 注册了 Watcher 的 Channel 集合 */
     private final Map<String, Set<Channel>> watchers = new ConcurrentHashMap<>();
+    /**
+     * Channel ID → 该 Channel 监听的路径集合（反向索引）。
+     * 将 removeChannel 从 O(全部路径) 降为 O(该 Channel 的 watcher 数)。
+     */
+    private final Map<String, Set<String>>  channelPaths = new ConcurrentHashMap<>();
 
     private final MetricsCollector metrics;
 
@@ -47,6 +52,9 @@ public class DefaultWatcherRegistry implements WatcherRegistry {
     public void register(ZNodePath path, Channel channel) {
         watchers.computeIfAbsent(path.value(), k -> ConcurrentHashMap.newKeySet())
                 .add(channel);
+        // 维护反向索引
+        channelPaths.computeIfAbsent(channel.id().asShortText(), k -> ConcurrentHashMap.newKeySet())
+                    .add(path.value());
         metrics.onWatcherRegistered();
         log.debug("Watcher registered: path={}, channel={}", path, channel.id().asShortText());
     }
@@ -67,12 +75,21 @@ public class DefaultWatcherRegistry implements WatcherRegistry {
             if (ch.isActive()) {
                 ch.writeAndFlush(payload);
             }
+            // 同步清理反向索引
+            Set<String> paths = channelPaths.get(ch.id().asShortText());
+            if (paths != null) paths.remove(path.value());
         }
     }
 
     @Override
     public void removeChannel(Channel channel) {
-        watchers.values().forEach(set -> set.remove(channel));
+        // 利用反向索引直接定位该 Channel 监听的路径，O(w) 而非 O(全部路径)
+        Set<String> paths = channelPaths.remove(channel.id().asShortText());
+        if (paths == null) return;
+        for (String p : paths) {
+            Set<Channel> chs = watchers.get(p);
+            if (chs != null) chs.remove(channel);
+        }
     }
 
     @Override

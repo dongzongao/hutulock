@@ -37,6 +37,12 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
     private final Map<String, Session> sessions         = new ConcurrentHashMap<>();
     private final Map<String, Channel> sessionChannels  = new ConcurrentHashMap<>();
     private final Map<String, String>  channelToSession = new ConcurrentHashMap<>();
+    /**
+     * 按过期时间排序的优先队列，用于加速过期扫描。
+     * 扫描时只需检查队头，O(k log s) 而非 O(s)（k=过期数，s=总会话数）。
+     */
+    private final java.util.PriorityQueue<Session> expiryQueue = new java.util.PriorityQueue<>(
+        Comparator.comparingLong(Session::getExpireTime));
 
     private final ZNodeStorage  zNodeStorage;
     private final MetricsCollector metrics;
@@ -75,6 +81,7 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
         sessions.put(session.getSessionId(), session);
         sessionChannels.put(session.getSessionId(), channel);
         channelToSession.put(channel.id().asShortText(), session.getSessionId());
+        synchronized (expiryQueue) { expiryQueue.offer(session); }
 
         metrics.onSessionCreated();
         log.info("Session created: {}", session);
@@ -148,8 +155,19 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
     }
 
     private void scanExpiredSessions() {
-        for (Session session : new ArrayList<>(sessions.values())) {
-            if (session.isExpired()) expireSession(session);
+        // 只检查队头（最早过期的），避免全表扫描
+        long now = System.currentTimeMillis();
+        while (true) {
+            Session session;
+            synchronized (expiryQueue) {
+                session = expiryQueue.peek();
+                if (session == null || session.getExpireTime() > now) break;
+                expiryQueue.poll();
+            }
+            // 会话可能已被 heartbeat 续期或已关闭，需二次确认
+            if (sessions.containsKey(session.getSessionId()) && session.isExpired()) {
+                expireSession(session);
+            }
         }
     }
 

@@ -7,6 +7,7 @@
 package com.hutulock.server.raft;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -61,12 +62,15 @@ public class RaftLog {
     }
 
     public synchronized void truncateFrom(int index) {
-        while (entries.size() > index) entries.remove(entries.size() - 1);
+        // subList().clear() 是单次 O(n) 操作，比循环 remove 少一次边界检查
+        if (index < entries.size()) {
+            entries.subList(index, entries.size()).clear();
+        }
     }
 
     public synchronized List<Entry> getFrom(int fromIndex) {
-        List<Entry> result = new ArrayList<>();
-        for (int i = fromIndex; i < entries.size(); i++) result.add(entries.get(i));
-        return result;
+        if (fromIndex >= entries.size()) return Collections.emptyList();
+        // 返回防御性拷贝（调用方可能在锁外持有引用）
+        return new ArrayList<>(entries.subList(fromIndex, entries.size()));
     }
 }

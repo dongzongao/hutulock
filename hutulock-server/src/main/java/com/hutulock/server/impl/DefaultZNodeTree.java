@@ -39,9 +39,18 @@ public class DefaultZNodeTree implements ZNodeStorage {
     private static final Logger log = LoggerFactory.getLogger(DefaultZNodeTree.class);
 
     private final Map<String, ZNode>         nodes       = new ConcurrentHashMap<>();
-    /** 父路径 → 子路径集合（有序：按 seqNum 升序，非顺序节点排最后） */
+    /**
+     * 父路径 → 子路径有序集合（TreeSet，字典序 = seqNum 升序）。
+     * 使用 TreeSet 替代 HashSet，避免 getChildren() 每次 O(n log n) 排序，
+     * 改为 O(log n) 插入/删除 + O(n) 遍历（已有序，无需再排）。
+     */
     private final Map<String, Set<String>>   children    = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> seqCounters = new ConcurrentHashMap<>();
+    /**
+     * sessionId → 该会话持有的临时节点路径集合（反向索引）。
+     * 将 cleanupSession 从 O(全部节点) 降为 O(该会话节点数)。
+     */
+    private final Map<String, Set<String>>   sessionNodes = new ConcurrentHashMap<>();
 
     private final WatcherRegistry  watcherRegistry;
     private final MetricsCollector metrics;
@@ -92,7 +101,14 @@ public class DefaultZNodeTree implements ZNodeStorage {
 
         ZNode node = ZNode.builder(actualPath, type).data(data).sessionId(sessionId).sequenceNum(seqNum).build();
         nodes.put(actualPath.value(), node);
-        children.computeIfAbsent(parent.value(), k -> ConcurrentHashMap.newKeySet()).add(actualPath.value());
+        // TreeSet 保证字典序（seq-0000000001 字典序 = 数值序），插入 O(log n)
+        children.computeIfAbsent(parent.value(), k -> Collections.synchronizedSortedSet(new TreeSet<>()))
+                .add(actualPath.value());
+        // 维护 sessionId → paths 反向索引（仅临时节点，持久节点不需要）
+        if (node.isEphemeral() && sessionId != null) {
+            sessionNodes.computeIfAbsent(sessionId, k -> ConcurrentHashMap.newKeySet())
+                        .add(actualPath.value());
+        }
 
         metrics.onZNodeCreated();
         log.debug("ZNode created: {}", node);
@@ -117,6 +133,11 @@ public class DefaultZNodeTree implements ZNodeStorage {
         // 顺序节点删除后 evict 路径缓存，防止内存泄漏
         if (node.isEphemeral() || node.isSequential()) {
             pathCache.evict(path.value());
+        }
+        // 同步清理反向索引
+        if (node.isEphemeral() && node.getSessionId() != null) {
+            Set<String> owned = sessionNodes.get(node.getSessionId());
+            if (owned != null) owned.remove(path.value());
         }
 
         metrics.onZNodeDeleted();
@@ -143,11 +164,12 @@ public class DefaultZNodeTree implements ZNodeStorage {
     public List<ZNodePath> getChildren(ZNodePath path) {
         Set<String> cp = children.get(path.value());
         if (cp == null || cp.isEmpty()) return Collections.emptyList();
-        // 直接构建列表，按 seqNum 排序（顺序节点路径字典序 = seqNum 升序）
-        List<String> sorted = new ArrayList<>(cp);
-        sorted.sort(Comparator.naturalOrder()); // seq-0000000001 字典序即数值序
-        List<ZNodePath> result = new ArrayList<>(sorted.size());
-        for (String s : sorted) result.add(pathCache.get(s));
+        // TreeSet 已有序，直接遍历，O(n)，无需再排序
+        List<ZNodePath> result;
+        synchronized (cp) {
+            result = new ArrayList<>(cp.size());
+            for (String s : cp) result.add(pathCache.get(s));
+        }
         return result;
     }
 
@@ -156,9 +178,14 @@ public class DefaultZNodeTree implements ZNodeStorage {
 
     @Override
     public synchronized List<ZNodePath> cleanupSession(String sessionId) {
-        List<ZNodePath> deleted = new ArrayList<>();
-        for (ZNode node : new ArrayList<>(nodes.values())) {
-            if (node.isEphemeral() && sessionId.equals(node.getSessionId())) {
+        // 利用反向索引直接定位该会话的临时节点，O(k) 而非 O(全部节点)
+        Set<String> owned = sessionNodes.remove(sessionId);
+        if (owned == null || owned.isEmpty()) return Collections.emptyList();
+
+        List<ZNodePath> deleted = new ArrayList<>(owned.size());
+        for (String pathStr : new ArrayList<>(owned)) {
+            ZNode node = nodes.get(pathStr);
+            if (node != null && node.isEphemeral()) {
                 delete(node.getPath());
                 deleted.add(node.getPath());
             }
