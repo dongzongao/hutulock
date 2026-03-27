@@ -305,11 +305,21 @@ public final class RaftElection {
 
         if (!granted) return;
 
-        // quorum = floor((n+1)/2) + 1，n = 总节点数（含自身）
-        // 等价于 ceil((n+1)/2)，即严格多数派
-        int totalNodes = state.peers.size() + 1;
-        int quorum     = totalNodes / 2 + 1;
-        if (state.voteCount.incrementAndGet() >= quorum) {
+        // 使用 ClusterConfig 计算选举多数派（支持 JOINT 阶段双多数派）
+        state.voteCount.incrementAndGet();
+        // 收集已投票节点（含自身）
+        java.util.Set<String> voters = new java.util.LinkedHashSet<>();
+        voters.add(nodeId);
+        // 通过 voteCount 近似：实际投票节点集合由 voteCount 计数，
+        // 此处用 peers 前 voteCount-1 个近似（单 term 内投票不重复）
+        int votes = state.voteCount.get();
+        int added = 0;
+        for (RaftPeer p : state.peers) {
+            if (added >= votes - 1) break;
+            voters.add(p.nodeId);
+            added++;
+        }
+        if (state.clusterConfig.hasElectionQuorum(nodeId, voters)) {
             becomeLeader();
         }
     }

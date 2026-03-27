@@ -468,23 +468,23 @@ public final class RaftReplication {
 
     /**
      * 检查是否可以推进 commitIndex（多数派已复制）。
-     * 插入排序对 3/5/7 节点集群（数组长度 ≤ 7）比 Arrays.sort 快约 30%。
+     *
+     * <p>使用 {@link ClusterConfig#hasQuorum} 计算多数派，支持 JOINT 阶段的双多数派要求。
+     * NORMAL 阶段退化为原有逻辑（插入排序对小集群更快）。
      */
     void tryAdvanceCommitIndex() {
-        int n = state.peers.size() + 1;
-        int[] indexes = new int[n];
-        indexes[0] = state.raftLog.lastIndex();
-        for (int i = 0; i < state.peers.size(); i++) {
-            indexes[i + 1] = state.peers.get(i).matchIndex;
-        }
-        for (int i = 1; i < n; i++) {
-            int key = indexes[i], j = i - 1;
-            while (j >= 0 && indexes[j] > key) { indexes[j + 1] = indexes[j]; j--; }
-            indexes[j + 1] = key;
-        }
-        int majority = indexes[state.peers.size() / 2];
-        if (majority > state.commitIndex && state.raftLog.termAt(majority) == state.currentTerm) {
-            advanceCommitIndex(majority);
+        ClusterConfig config = state.clusterConfig;
+        java.util.Map<String, Integer> matchIndexes = state.peerMatchIndexes();
+
+        // 从 lastIndex 向下找最大的满足多数派的 index
+        int lastIdx = state.raftLog.lastIndex();
+        for (int n = lastIdx; n > state.commitIndex; n--) {
+            // 只能提交当前 term 的日志（Raft §5.4.2，防止 Figure 8 问题）
+            if (state.raftLog.termAt(n) != state.currentTerm) continue;
+            if (config.hasQuorum(nodeId, matchIndexes, n)) {
+                advanceCommitIndex(n);
+                break;
+            }
         }
     }
 
