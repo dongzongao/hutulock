@@ -22,15 +22,15 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * ZNodePathCache 单元测试
+ * ZNodePathCache unit tests.
  *
- * 覆盖：
- *   - 相同路径返回同一对象（缓存命中）
- *   - 不同路径返回不同对象
- *   - evict 后缓存失效
- *   - getSeqPath 预计算路径正确性
- *   - formatSeq 边界值
- *   - 超出容量上限时降级（不缓存，不抛异常）
+ * Coverage:
+ *   - Same path returns same instance (cache hit)
+ *   - Different paths return different instances
+ *   - evict invalidates cache entry
+ *   - getSeqPath pre-computed path correctness
+ *   - formatSeq boundary values
+ *   - Beyond capacity limit: graceful degradation (no cache, no exception)
  */
 class ZNodePathCacheTest {
 
@@ -41,13 +41,13 @@ class ZNodePathCacheTest {
         cache = new ZNodePathCache();
     }
 
-    // ==================== 基本缓存语义 ====================
+    // ==================== Basic cache semantics ====================
 
     @Test
     void get_samePathReturnsSameInstance() {
         ZNodePath a = cache.get("/locks/order");
         ZNodePath b = cache.get("/locks/order");
-        assertSame(a, b, "相同路径应返回同一缓存实例");
+        assertSame(a, b, "same path should return the same cached instance");
     }
 
     @Test
@@ -93,7 +93,7 @@ class ZNodePathCacheTest {
         ZNodePath first = cache.get("/locks/seq-node");
         cache.evict("/locks/seq-node");
         ZNodePath second = cache.get("/locks/seq-node");
-        // 重新创建，可能是不同实例（取决于 ZNodePath.of 实现）
+        // Re-created after eviction; may be a different instance depending on ZNodePath.of impl
         assertNotNull(second);
         assertEquals("/locks/seq-node", second.value());
     }
@@ -119,7 +119,7 @@ class ZNodePathCacheTest {
 
     @Test
     void getSeqPath_largeSeqBeyondPrecomputed() {
-        // PRECOMPUTED_LIMIT = 100_000，测试超出预计算范围
+        // PRECOMPUTED_LIMIT = 100_000, test beyond pre-computed range
         ZNodePath path = cache.getSeqPath("/locks/order/seq-", 100_000);
         assertEquals("/locks/order/seq-0000100000", path.value());
     }
@@ -128,10 +128,10 @@ class ZNodePathCacheTest {
     void getSeqPath_sameSeqReturnsCachedInstance() {
         ZNodePath a = cache.getSeqPath("/locks/order/seq-", 42);
         ZNodePath b = cache.getSeqPath("/locks/order/seq-", 42);
-        assertSame(a, b, "相同序号路径应命中缓存");
+        assertSame(a, b, "same seq path should hit cache");
     }
 
-    // ==================== formatSeq 静态方法 ====================
+    // ==================== formatSeq static method ====================
 
     @Test
     void formatSeq_paddingCorrect() {
@@ -146,12 +146,11 @@ class ZNodePathCacheTest {
         assertEquals("0999999999", ZNodePathCache.formatSeq(999_999_999));
     }
 
-    // ==================== 容量上限降级 ====================
+    // ==================== Capacity limit degradation ====================
 
     @Test
     void get_beyondMaxSize_doesNotCache() {
-        // MAX_SIZE = 8192，填满后再 get 应降级（不缓存，但返回有效对象）
-        // 这里只验证不抛异常且返回非 null
+        // MAX_SIZE = 8192; after filling, further gets should degrade gracefully (no exception, valid object)
         for (int i = 0; i < 100; i++) {
             ZNodePath p = cache.get("/path/" + i);
             assertNotNull(p);

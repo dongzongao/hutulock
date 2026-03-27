@@ -26,16 +26,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * ObjectPool 单元测试
+ * ObjectPool unit tests.
  *
- * 覆盖：
- *   - borrow/release 基本语义
- *   - reset() 在 release 时被调用
- *   - Thread-Local 本地池命中（快路径）
- *   - 全局池补货（慢路径）
- *   - 全局池满时丢弃（不 OOM）
- *   - 统计计数正确性
- *   - 多线程并发安全
+ * Coverage:
+ *   - borrow/release basic semantics
+ *   - reset() called on release
+ *   - Thread-Local local pool hit (fast path)
+ *   - Global pool refill (slow path)
+ *   - Global pool full: discard without OOM
+ *   - Stats counter correctness
+ *   - Multi-thread concurrency safety
  */
 class ObjectPoolTest {
 
@@ -54,11 +54,11 @@ class ObjectPoolTest {
 
     @BeforeEach
     void setUp() {
-        // 容量 8，预热 4 个
+        // capacity 8, pre-warm 4
         pool = new ObjectPool<>(8, Item::new);
     }
 
-    // ==================== 基本语义 ====================
+    // ==================== Basic semantics ====================
 
     @Test
     void borrow_returnsNonNull() {
@@ -70,16 +70,15 @@ class ObjectPoolTest {
         Item item = pool.borrow();
         item.resetCalled = false;
         pool.release(item);
-        assertTrue(item.resetCalled, "release 应调用 reset()");
+        assertTrue(item.resetCalled, "release should call reset()");
     }
 
     @Test
     void borrowAfterRelease_reusesSameObject() {
-        // 先清空本地池，确保 borrow 的对象来自全局池
+        // Same thread: local pool should return the same object after release
         Item first = pool.borrow();
         pool.release(first);
         Item second = pool.borrow();
-        // 同一线程，本地池命中，应复用同一对象
         assertSame(first, second);
     }
 
@@ -89,14 +88,14 @@ class ObjectPoolTest {
         item.value = 42;
         pool.release(item);
         Item reused = pool.borrow();
-        assertEquals(0, reused.value, "复用对象的 value 应被 reset 为 0");
+        assertEquals(0, reused.value, "reused object value should be reset to 0");
     }
 
-    // ==================== 本地池满 → 批量归还全局池 ====================
+    // ==================== Local pool overflow -> batch return to global ====================
 
     @Test
     void localPoolOverflow_doesNotLoseObjects() {
-        // borrow LOCAL_MAX + 5 个对象，全部 release，验证不丢失、不抛异常
+        // borrow LOCAL_MAX + 5 objects, release all, verify no exception
         int count = 40; // > LOCAL_MAX(32)
         List<Item> items = new ArrayList<>();
         for (int i = 0; i < count; i++) items.add(pool.borrow());
@@ -105,20 +104,19 @@ class ObjectPoolTest {
 
     @Test
     void localPoolOverflow_globalPoolReceivesItems() {
-        // 先把本地池填满（borrow 后全部 release）
+        // Fill local pool then release all; global pool should receive batch
         int count = 40;
         List<Item> items = new ArrayList<>();
         for (int i = 0; i < count; i++) items.add(pool.borrow());
         items.forEach(pool::release);
-        // 全局池应该有对象（批量归还了一部分）
-        assertTrue(pool.globalPoolSize() > 0, "本地池溢出后应批量归还全局池");
+        assertTrue(pool.globalPoolSize() > 0, "global pool should receive items after local overflow");
     }
 
-    // ==================== 全局池满 → 丢弃，不 OOM ====================
+    // ==================== Global pool full -> discard, no OOM ====================
 
     @Test
     void globalPoolFull_releaseDoesNotThrow() {
-        // 容量 8 的池，release 100 个对象，全局池满后应静默丢弃
+        // Pool capacity 8, release 100 objects; overflow should be silently discarded
         assertDoesNotThrow(() -> {
             for (int i = 0; i < 100; i++) {
                 pool.release(new Item());
@@ -126,7 +124,7 @@ class ObjectPoolTest {
         });
     }
 
-    // ==================== 统计 ====================
+    // ==================== Stats ====================
 
     @Test
     void stats_borrowCountIncrementsCorrectly() {
@@ -140,21 +138,21 @@ class ObjectPoolTest {
 
     @Test
     void stats_localHitRateIsPositiveAfterReuse() {
-        // 第一次 borrow 可能来自全局池，release 后再 borrow 应命中本地池
-        pool.borrow(); // 预热本地池
+        // First borrow may come from global pool; after release, next borrow hits local pool
+        pool.borrow(); // warm up local pool
         Item item = pool.borrow();
         pool.release(item);
-        pool.borrow(); // 本地池命中
-        assertTrue(pool.localHitRate() > 0.0, "应有本地池命中");
+        pool.borrow(); // local pool hit
+        assertTrue(pool.localHitRate() > 0.0, "should have local pool hits");
     }
 
     @Test
     void stats_newAllocRateIsAccurate() {
-        // 新建一个容量为 0 的池，全局池为空，第一次 borrow 直接 new
+        // Pool with capacity 0: global pool empty, first borrow must allocate new
         ObjectPool<Item> emptyPool = new ObjectPool<>(0, Item::new);
         Item item = emptyPool.borrow();
         assertNotNull(item);
-        assertTrue(emptyPool.newAllocRate() > 0.0, "容量为 0 的池 borrow 应触发 new，newAllocRate 应 > 0");
+        assertTrue(emptyPool.newAllocRate() > 0.0, "capacity-0 pool borrow should trigger new alloc");
     }
 
     @Test
@@ -164,10 +162,10 @@ class ObjectPoolTest {
             pool.release(item);
         }
         double sum = pool.localHitRate() + pool.globalHitRate() + pool.newAllocRate();
-        assertEquals(1.0, sum, 0.001, "三种命中率之和应为 1.0");
+        assertEquals(1.0, sum, 0.001, "sum of all hit rates should equal 1.0");
     }
 
-    // ==================== 多线程并发安全 ====================
+    // ==================== Multi-thread concurrency safety ====================
 
     @Test
     void concurrentBorrowRelease_noExceptionAndCountsCorrect() throws InterruptedException {
@@ -197,8 +195,8 @@ class ObjectPoolTest {
         start.countDown();
         done.await();
 
-        assertEquals(0, errors.get(), "并发操作不应抛出异常");
-        assertEquals((long) threads * opsPerThread, pool.getBorrowCount(), "borrowCount 应精确");
+        assertEquals(0, errors.get(), "concurrent ops should not throw");
+        assertEquals((long) threads * opsPerThread, pool.getBorrowCount(), "borrowCount should be exact");
     }
 
     @Test
@@ -226,6 +224,6 @@ class ObjectPoolTest {
 
         start.countDown();
         done.await();
-        assertEquals(0, nullCount.get(), "borrow() 永远不应返回 null");
+        assertEquals(0, nullCount.get(), "borrow() should never return null");
     }
 }
