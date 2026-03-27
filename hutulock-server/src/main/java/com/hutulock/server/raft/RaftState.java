@@ -16,8 +16,11 @@
 package com.hutulock.server.raft;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -148,4 +151,47 @@ public final class RaftState {
 
     // ---- Peer 列表 ----
     public final List<RaftPeer> peers = new ArrayList<>();
+
+    // ---- 集群成员配置（动态成员变更，Raft §6）----
+    /**
+     * 当前集群配置。
+     *
+     * <p>NORMAL 阶段：稳定配置，只有 oldMembers。
+     * <p>JOINT 阶段：联合共识过渡配置，同时持有 oldMembers 和 newMembers。
+     *
+     * <p>初始为空配置（单节点启动时无 peers），addPeer 时动态更新。
+     * 成员变更命令 apply 时由 {@link RaftReplication} 更新此字段。
+     */
+    public volatile ClusterConfig clusterConfig =
+        ClusterConfig.normal(Collections.emptySet());
+
+    /**
+     * 是否有成员变更正在进行（防止并发变更）。
+     * Raft §6：同一时刻只允许一个成员变更在途。
+     */
+    public volatile boolean membershipChangePending = false;
+
+    /**
+     * 获取所有 peer 的 matchIndex 快照（用于 quorum 计算）。
+     */
+    public Map<String, Integer> peerMatchIndexes() {
+        Map<String, Integer> result = new java.util.HashMap<>(peers.size() * 2);
+        for (RaftPeer p : peers) {
+            result.put(p.nodeId, p.matchIndex);
+        }
+        return result;
+    }
+
+    /**
+     * 获取所有已投票节点集合（用于选举 quorum 计算）。
+     * 包含自身（selfId）。
+     */
+    public Set<String> votersFor(String selfId) {
+        Set<String> voters = new LinkedHashSet<>();
+        voters.add(selfId);
+        for (RaftPeer p : peers) {
+            if (p.matchIndex > 0) voters.add(p.nodeId);
+        }
+        return voters;
+    }
 }
