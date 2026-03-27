@@ -8,9 +8,10 @@
 [![Java](https://img.shields.io/badge/Java-11%2B-orange.svg)](https://openjdk.org/)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB.svg)](https://python.org/)
 [![Go](https://img.shields.io/badge/Go-1.21%2B-00ADD8.svg)](https://go.dev/)
+[![PHP](https://img.shields.io/badge/PHP-8.0%2B-777BB4.svg)](https://php.net/)
 [![Netty](https://img.shields.io/badge/Netty-4.1.129-green.svg)](https://netty.io/)
 
-*公平锁 · 看门狗续期 · 多语言 SDK · 生产就绪*
+*公平锁 · 看门狗续期 · Java / Python / Go / PHP SDK · 生产就绪*
 
 </div>
 
@@ -36,7 +37,7 @@
 - **零外部依赖** — Raft 引擎内置，不依赖 Redis / ZooKeeper / etcd
 - **公平锁** — ZooKeeper 顺序临时节点模式，FIFO 排队，彻底避免羊群效应
 - **看门狗** — 客户端定时心跳续期，服务端 TTL 兜底，锁不会因网络抖动意外释放
-- **多语言** — Java / Python / Go SDK，同一套文本协议，互相兼容
+- **多语言** — Java / Python / Go / PHP SDK，同一套文本协议，互相兼容
 - **生产就绪** — TLS、Token/HMAC 认证、ACL 授权、限流、Prometheus Metrics、审计日志
 
 ---
@@ -80,7 +81,8 @@ hutulock/
 ├── hutulock-cli/       交互式命令行工具
 └── sdk/
     ├── python/         Python SDK（零依赖）
-    └── go/             Go SDK（零依赖）
+    ├── go/             Go SDK（零依赖）
+    └── php/            PHP SDK（零依赖）
 ```
 
 ---
@@ -188,6 +190,31 @@ defer client.Close()
 token, _ := client.Lock(ctx, "order-lock")
 defer client.Unlock(ctx, token)
 // 临界区
+```
+
+### PHP
+
+```bash
+composer require hutulock/hutulock-php
+```
+
+```php
+use HutuLock\HutuLockClient;
+
+$client = new HutuLockClient(
+    nodes: [['127.0.0.1', 8881], ['127.0.0.1', 8882]],
+    lockTimeout: 30.0,
+);
+$client->connect();
+
+$token = $client->lock('order-lock');
+try {
+    processOrder(); // 临界区
+    $client->tick(); // 触发看门狗续期（PHP 单线程）
+} finally {
+    $client->unlock($token);
+}
+$client->close();
 ```
 
 ---
