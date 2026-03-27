@@ -93,7 +93,14 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
     @Override
     public void heartbeat(String sessionId) {
         Session s = sessions.get(sessionId);
-        if (s != null) s.heartbeat();
+        if (s == null) return;
+        s.heartbeat();
+        // ZooKeeper ExpiryQueue 设计：heartbeat 后重新入队，确保过期时间更新到队列
+        // PriorityQueue 不支持 decrease-key，用 remove+offer 实现（O(log n)）
+        synchronized (expiryQueue) {
+            expiryQueue.remove(s);
+            expiryQueue.offer(s);
+        }
     }
 
     @Override
@@ -174,7 +181,8 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
     private void expireSession(Session session) {
         String sessionId = session.getSessionId();
         sessions.remove(sessionId);
-        sessionChannels.remove(sessionId);
+        Channel ch = sessionChannels.remove(sessionId);
+        if (ch != null) channelToSession.remove(ch.id().asShortText()); // 防止内存泄漏
         session.transitionTo(State.EXPIRED);
 
         metrics.onSessionExpired();
@@ -184,7 +192,6 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
 
         zNodeStorage.cleanupSession(sessionId);
 
-        Channel ch = sessionChannels.get(sessionId);
         if (ch != null && ch.isActive()) {
             WatchEvent event = new WatchEvent(WatchEvent.Type.SESSION_EXPIRED, ZNodePath.ROOT);
             ch.writeAndFlush(event.serialize() + "\n");

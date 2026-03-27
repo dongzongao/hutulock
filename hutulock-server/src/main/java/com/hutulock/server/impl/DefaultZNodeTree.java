@@ -116,7 +116,8 @@ public class DefaultZNodeTree implements ZNodeStorage {
         eventBus.publish(ZNodeEvent.builder(ZNodeEvent.Type.CREATED, actualPath, nodeId)
             .nodeType(type).sessionId(sessionId).build());
         watcherRegistry.fire(actualPath, WatchEvent.Type.NODE_CREATED);
-        watcherRegistry.fire(parent, WatchEvent.Type.NODE_DATA_CHANGED);
+        // 父节点子列表变化，触发 CHILDREN_CHANGED（参考 ZooKeeper NodeChildrenChanged）
+        watcherRegistry.fire(parent, WatchEvent.Type.CHILDREN_CHANGED);
 
         return actualPath;
     }
@@ -145,6 +146,10 @@ public class DefaultZNodeTree implements ZNodeStorage {
 
         eventBus.publish(ZNodeEvent.builder(ZNodeEvent.Type.DELETED, path, nodeId).build());
         watcherRegistry.fire(path, WatchEvent.Type.NODE_DELETED);
+        // 父节点子列表变化
+        if (!path.isRoot()) {
+            watcherRegistry.fire(path.parent(), WatchEvent.Type.CHILDREN_CHANGED);
+        }
     }
 
     @Override

@@ -35,8 +35,15 @@ public class RaftPeerHandler extends SimpleChannelInboundHandler<String> {
     }
 
     @Override
+    public void channelInactive(ChannelHandlerContext ctx) {
+        // 连接断开时记录，RaftPeer.connect() 的 closeFuture 监听器负责重连
+        log.warn("Raft peer connection closed: {}", ctx.channel().remoteAddress());
+    }
+
+    @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        log.error("Raft peer connection error: {}", cause.getMessage());
+        log.error("Raft peer connection error from {}: {}", ctx.channel().remoteAddress(), cause.getMessage());
+        // 关闭 channel，触发 closeFuture → RaftPeer 自动重连
         ctx.close();
     }
 }

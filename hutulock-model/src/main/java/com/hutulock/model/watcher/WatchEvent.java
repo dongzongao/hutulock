@@ -21,7 +21,12 @@ import com.hutulock.model.znode.ZNodePath;
 public final class WatchEvent {
 
     public enum Type {
-        NODE_CREATED, NODE_DELETED, NODE_DATA_CHANGED, SESSION_EXPIRED
+        NODE_CREATED,
+        NODE_DELETED,
+        NODE_DATA_CHANGED,
+        /** 子节点列表变化（增删子节点时触发父节点的 watcher，参考 ZooKeeper NodeChildrenChanged）。 */
+        CHILDREN_CHANGED,
+        SESSION_EXPIRED
     }
 
     private final Type      type;

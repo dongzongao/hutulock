@@ -34,8 +34,13 @@ public class DefaultWatcherRegistry implements WatcherRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultWatcherRegistry.class);
 
-    /** path.value() → 注册了 Watcher 的 Channel 集合 */
+    /** path.value() → 注册了 Watcher 的 Channel 集合（One-shot，触发后自动注销） */
     private final Map<String, Set<Channel>> watchers = new ConcurrentHashMap<>();
+    /**
+     * path.value() → 持久 Watcher Channel 集合（参考 ZooKeeper 3.6 addWatch）。
+     * 触发后不自动注销，适合需要持续监听的场景（如客户端监听锁队列整体变化）。
+     */
+    private final Map<String, Set<Channel>> persistentWatchers = new ConcurrentHashMap<>();
     /**
      * Channel ID → 该 Channel 监听的路径集合（反向索引）。
      * 将 removeChannel 从 O(全部路径) 降为 O(该 Channel 的 watcher 数)。
@@ -52,7 +57,6 @@ public class DefaultWatcherRegistry implements WatcherRegistry {
     public void register(ZNodePath path, Channel channel) {
         watchers.computeIfAbsent(path.value(), k -> ConcurrentHashMap.newKeySet())
                 .add(channel);
-        // 维护反向索引
         channelPaths.computeIfAbsent(channel.id().asShortText(), k -> ConcurrentHashMap.newKeySet())
                     .add(path.value());
         metrics.onWatcherRegistered();
@@ -60,36 +64,51 @@ public class DefaultWatcherRegistry implements WatcherRegistry {
     }
 
     @Override
-    public void fire(ZNodePath path, WatchEvent.Type eventType) {
-        // One-shot：remove 后推送，确保不重复触发
-        Set<Channel> channels = watchers.remove(path.value());
-        if (channels == null || channels.isEmpty()) return;
+    public void registerPersistent(ZNodePath path, Channel channel) {
+        persistentWatchers.computeIfAbsent(path.value(), k -> ConcurrentHashMap.newKeySet())
+                          .add(channel);
+        metrics.onWatcherRegistered();
+        log.debug("Persistent watcher registered: path={}, channel={}", path, channel.id().asShortText());
+    }
 
+    @Override
+    public void fire(ZNodePath path, WatchEvent.Type eventType) {
         WatchEvent event   = new WatchEvent(eventType, path);
         String     payload = event.serialize() + "\n";
 
-        log.debug("Firing watch event: {}, notifying {} watchers", event, channels.size());
-        metrics.onWatcherFired();
-
-        for (Channel ch : channels) {
-            if (ch.isActive()) {
-                ch.writeAndFlush(payload);
+        // One-shot watcher：remove 后推送，确保不重复触发
+        Set<Channel> oneShot = watchers.remove(path.value());
+        if (oneShot != null && !oneShot.isEmpty()) {
+            log.debug("Firing one-shot watch event: {}, notifying {} watchers", event, oneShot.size());
+            metrics.onWatcherFired();
+            for (Channel ch : oneShot) {
+                if (ch.isActive()) ch.writeAndFlush(payload);
+                Set<String> paths = channelPaths.get(ch.id().asShortText());
+                if (paths != null) paths.remove(path.value());
             }
-            // 同步清理反向索引
-            Set<String> paths = channelPaths.get(ch.id().asShortText());
-            if (paths != null) paths.remove(path.value());
+        }
+
+        // 持久 watcher：推送但不 remove
+        Set<Channel> persistent = persistentWatchers.get(path.value());
+        if (persistent != null && !persistent.isEmpty()) {
+            log.debug("Firing persistent watch event: {}, notifying {} watchers", event, persistent.size());
+            for (Channel ch : persistent) {
+                if (ch.isActive()) ch.writeAndFlush(payload);
+            }
         }
     }
 
     @Override
     public void removeChannel(Channel channel) {
-        // 利用反向索引直接定位该 Channel 监听的路径，O(w) 而非 O(全部路径)
         Set<String> paths = channelPaths.remove(channel.id().asShortText());
-        if (paths == null) return;
-        for (String p : paths) {
-            Set<Channel> chs = watchers.get(p);
-            if (chs != null) chs.remove(channel);
+        if (paths != null) {
+            for (String p : paths) {
+                Set<Channel> chs = watchers.get(p);
+                if (chs != null) chs.remove(channel);
+            }
         }
+        // 同时清理持久 watcher
+        persistentWatchers.values().forEach(set -> set.remove(channel));
     }
 
     @Override

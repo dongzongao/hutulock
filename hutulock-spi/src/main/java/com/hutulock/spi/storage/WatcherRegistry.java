@@ -14,14 +14,24 @@ import io.netty.channel.Channel;
  * Watcher 注册表接口（SPI 边界契约）
  *
  * <p>维护 path → Channel 的映射。
- * Watcher 是一次性的（One-shot）：触发后自动注销。
+ * 默认 Watcher 是一次性的（One-shot）：触发后自动注销。
+ * 持久 Watcher（{@link #registerPersistent}）触发后不注销，参考 ZooKeeper 3.6 addWatch。
  *
  * @author HutuLock Authors
  * @since 1.0.0
  */
 public interface WatcherRegistry {
 
+    /** 注册 One-shot Watcher，触发一次后自动注销。 */
     void register(ZNodePath path, Channel channel);
+
+    /**
+     * 注册持久 Watcher，触发后不自动注销（参考 ZooKeeper 3.6 addWatch PERSISTENT 模式）。
+     * 适合需要持续监听的场景，如客户端监听锁队列整体变化。
+     * 连接断开时通过 {@link #removeChannel} 清理。
+     */
+    void registerPersistent(ZNodePath path, Channel channel);
+
     void fire(ZNodePath path, WatchEvent.Type eventType);
     void removeChannel(Channel channel);
     int watcherCount(ZNodePath path);

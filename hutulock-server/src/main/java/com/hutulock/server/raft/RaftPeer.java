@@ -8,6 +8,7 @@ package com.hutulock.server.raft;
 
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.*;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.LineBasedFrameDecoder;
@@ -40,6 +41,25 @@ public class RaftPeer {
     public volatile int nextIndex  = 1;
     /** Leader 维护的 matchIndex（已确认复制的最高日志索引） */
     public volatile int matchIndex = 0;
+
+    /**
+     * 流控标志：上一条 AppendEntries 尚未收到 ack 时为 true。
+     *
+     * <p>防止对慢速 Follower 无限堆积发送，避免内存和网络资源浪费。
+     * ack 回来（{@code handleAppendResp}）后由 Leader 清除此标志并立即补发。
+     */
+    public volatile boolean inFlight = false;
+
+    /**
+     * 快速回退（Fast Backup）：Follower 拒绝时携带的冲突 term。
+     * -1 表示无冲突信息（旧协议兼容）。
+     */
+    public volatile int conflictTerm  = -1;
+    /**
+     * 快速回退：冲突 term 在 Follower 日志中的第一条索引。
+     * Leader 可直接跳到此位置，避免逐条回退。
+     */
+    public volatile int conflictIndex = -1;
 
     private volatile Channel     channel;
     private final EventLoopGroup group;
@@ -82,11 +102,19 @@ public class RaftPeer {
             });
     }
 
-    /** 发送消息，若连接不可用则静默丢弃。 */
+    /** 发送消息，若连接不可用则记录 warn 并丢弃（避免静默失败）。 */
     public void send(String msg) {
         Channel ch = channel;
         if (ch != null && ch.isActive()) {
-            ch.writeAndFlush(msg + "\n");
+            ch.writeAndFlush(msg + "\n").addListener((ChannelFutureListener) f -> {
+                if (!f.isSuccess()) {
+                    log.warn("Raft [{}] failed to send to peer {}: {}", owner.getNodeId(), nodeId,
+                        f.cause() != null ? f.cause().getMessage() : "unknown");
+                }
+            });
+        } else {
+            log.debug("Raft [{}] drop message to peer {} (not connected): {}",
+                owner.getNodeId(), nodeId, msg.split(" ", 2)[0]);
         }
     }
 }

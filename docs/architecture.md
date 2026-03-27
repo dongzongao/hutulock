@@ -104,10 +104,10 @@ hutulock-spi    ← 接口契约，依赖 model
 
 | | WatcherRegistry | EventBus |
 |--|----------------|---------|
-| 语义 | One-shot Watcher | 发布-订阅 |
+| 语义 | One-shot / 持久 Watcher | 发布-订阅 |
 | 订阅者 | 网络客户端 | 内部 Java 组件 |
-| 触发 | 一次后注销 | 持续触发 |
-| 用途 | 锁等待通知 | 审计、监控、解耦 |
+| 触发 | One-shot 触发后注销；持久 Watcher 持续触发 | 持续触发 |
+| 用途 | 锁等待通知、持续监听 | 审计、监控、解耦 |
 
 ---
 
@@ -138,8 +138,6 @@ hutulock-spi    ← 接口契约，依赖 model
 
 ---
 
----
-
 ## ADR-009：IoC 容器管理内存组件
 
 **背景：** `HutuLockServer` 构造函数中手动 `new` 所有组件，依赖关系散落在一处，难以替换和测试。
@@ -158,7 +156,7 @@ hutulock-spi    ← 接口契约，依赖 model
 **Bean 注册顺序（从底层到上层）：**
 
 ```
-serverProperties → eventBus → metrics → metricsHttpServer
+serverProperties → memoryManager → eventBus → metrics → metricsHttpServer
   → watcherRegistry → zNodeStorage → sessionManager → sessionTracker
   → lockManager → raftNode → securityContext → lockServerHandler
 ```
@@ -167,11 +165,6 @@ serverProperties → eventBus → metrics → metricsHttpServer
 - `ctx.start()` 按注册顺序调用所有 `Lifecycle.start()`
 - `ctx.close()` 按注册逆序调用所有 `Lifecycle.shutdown()`
 
-**理由：**
-- 零外部依赖，与项目整体风格一致
-- `withSecurity()` 可通过重新注册同名 Bean 覆盖默认实现
-- 测试时可单独替换任意 Bean
-
 ---
 
 ## ADR-010：代理模块实现横切关注点
@@ -179,21 +172,6 @@ serverProperties → eventBus → metrics → metricsHttpServer
 **背景：** 日志、指标采集、重试等横切关注点散落在各实现类中，难以统一管理。
 
 **决策：** 新增 `hutulock-proxy` 模块，基于 JDK 动态代理实现，通过 `ProxyBuilder` 链式组合。
-
-**模块结构：**
-
-```
-hutulock-proxy/
-  api/
-    Proxiable.java      代理类型枚举（LOGGING / METRICS / RETRY）
-    ProxyCatalog.java   各 SPI 接口支持的代理类型声明
-  handler/
-    LoggingHandler.java  方法调用日志（入参、耗时、异常）
-    MetricsHandler.java  调用次数、失败次数、平均耗时统计
-    RetryHandler.java    失败自动重试（可配置次数、退避、异常白名单）
-  support/
-    ProxyBuilder.java    链式构建 API
-```
 
 **各 SPI 接口支持的代理类型：**
 
@@ -205,17 +183,64 @@ hutulock-proxy/
 | `EventBus` | ✓ | | |
 | `WatcherRegistry` | ✓ | | |
 
-**使用示例：**
+---
 
-```java
-ZNodeStorage proxied = ProxyBuilder.wrap(ZNodeStorage.class, realImpl)
-    .withLogging()
-    .withMetrics()
-    .build();
-// 调用链：LoggingProxy → MetricsProxy → realImpl
-```
+## ADR-011：Raft 引入 Zab 风格 Recovery Phase
 
-**注意：** 被代理的 Bean 若同时实现 `Lifecycle`，需将真实实现单独注册到容器（保留生命周期感知），代理版本作为对外暴露的接口 Bean。
+**背景：** Leader 上任后立即开放 propose，Follower 日志可能尚未对齐，导致第一批写入触发多轮 nextIndex 回退，增加延迟。
+
+**决策：** 参考 ZooKeeper Zab 协议的 Recovery Phase，Leader 上任后先广播一轮同步心跳，等多数派确认日志对齐后才开放 propose。
+
+**实现：**
+- `RaftState.leaderReady`：同步屏障标志，false 时 propose 排队等待
+- `RaftState.syncAckCount`：同步阶段已收到 ack 的节点数
+- `RaftState.pendingSyncQueue`：同步期间排队的 propose，就绪后批量触发
+- `RaftElection.completeSyncPhase()`：多数派 ack 后置 `leaderReady=true` 并 flush 队列
+
+**效果：** Leader 切换后第一批写入无需多轮回退，延迟更稳定。
+
+---
+
+## ADR-012：Raft 六项性能优化
+
+**背景：** 原始实现存在多处性能瓶颈。
+
+**决策：** 参考 etcd/raft 和 Raft 论文 §5.3 优化建议，实施以下六项改进：
+
+| 优化 | 改动 | 效果 |
+|------|------|------|
+| Fast Backup | `APPEND_RESP` 携带 `conflictTerm/conflictIndex` | 日志对齐从 O(日志长度) 降为 O(term数) |
+| 批量 Pipeline | `flushPipeline()` 合并心跳与 propose 发送 | 减少 RPC 次数，提升吞吐 |
+| inFlight 流控 | `RaftPeer.inFlight` 标志 | 防止对慢速 Follower 无限堆积 |
+| RaftLog ReadWriteLock | 读操作共享锁，写操作独占锁 | 多 Follower 并发读不互斥 |
+| DelayQueue 超时清理 | `ProposeDeadline` 替代全量 Map 扫描 | O(k log n) vs O(n) |
+| 连续选举上限 | `MAX_CONSECUTIVE_ELECTIONS = 10` | 防止网络分区下的选举风暴 |
+
+---
+
+## ADR-013：参考 ZooKeeper 的四项设计改进
+
+**背景：** 对照 ZooKeeper 源码发现若干可借鉴的设计点。
+
+**决策：** 引入以下改进：
+
+**1. Session heartbeat 重新入队（修复 bug）**
+- 原问题：`PriorityQueue` 中 session 的 `expireTime` 更新后队列位置不变，导致误判过期
+- 修复：`heartbeat()` 做 `remove + offer` 重新入队，O(log n)
+- 同时修复 `expireSession` 中 `channelToSession` 未清理的内存泄漏
+
+**2. `WatchEvent.Type` 增加 `CHILDREN_CHANGED`**
+- 对应 ZooKeeper `NodeChildrenChanged`
+- `create/delete` 操作触发父节点 `CHILDREN_CHANGED`，语义比原来的 `NODE_DATA_CHANGED` 更准确
+
+**3. `ZNode` 增加 `czxid/mzxid`（事务 ID）**
+- 对应 ZooKeeper `Stat.czxid/mzxid`，记录创建和最后修改时的 Raft logIndex
+- 为线性一致读奠定基础：客户端携带 `czxid`，服务端确保 `lastApplied >= czxid` 后响应
+
+**4. 持久 Watcher（`registerPersistent`）**
+- 对应 ZooKeeper 3.6 `addWatch PERSISTENT` 模式
+- 触发后不自动注销，适合需要持续监听锁队列变化的场景
+- `WatcherRegistry` SPI 新增 `registerPersistent` 方法
 
 ---
 
@@ -228,3 +253,4 @@ ZNodeStorage proxied = ProxyBuilder.wrap(ZNodeStorage.class, realImpl)
 | 无 Raft 日志压缩 | 长期运行日志无限增长 | 实现 Log Compaction |
 | REDIRECT 依赖 nodeId | 客户端需要维护 nodeId→地址映射 | 改为直接返回 host:port |
 | 单线程 Raft 调度器 | 高并发下可能成为瓶颈 | 评估多线程优化 |
+| DefaultZNodeTree 全局锁 | 不同锁名的写操作互相阻塞 | 按 lockRoot 路径分段加锁 |
