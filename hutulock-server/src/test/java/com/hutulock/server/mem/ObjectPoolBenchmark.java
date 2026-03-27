@@ -241,19 +241,16 @@ class ObjectPoolBenchmark {
     void benchmarkSingleThread() {
         System.out.println("\n========== 单线程吞吐量（ops/sec）==========");
 
-        long singly      = singleThreadThroughput(
+        long singly   = singleThreadThroughput(
             wrapSingly(new SinglyLinkedPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
-        long doubly      = singleThreadThroughput(
+        long doubly   = singleThreadThroughput(
             wrapDoubly(new DoublyLinkedPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
-        long blocking    = singleThreadThroughput(
-            wrapBlocking(new ObjectPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
-        long twoLevel    = singleThreadThroughput(
+        long twoLevel = singleThreadThroughput(
             wrapBlocking(new ObjectPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
 
-        System.out.printf("  SinglyLinked  (Treiber Stack CAS) : %,12d ops/sec%n", singly);
-        System.out.printf("  DoublyLinked  (ArrayDeque+sync)   : %,12d ops/sec%n", doubly);
-        System.out.printf("  BlockingQueue (ArrayBlockingQueue) : %,12d ops/sec%n", blocking);
-        System.out.printf("  TwoLevel      (ThreadLocal+Global) : %,12d ops/sec  ← 最优解%n", twoLevel);
+        System.out.printf("  SinglyLinked  (Treiber Stack CAS)  : %,12d ops/sec%n", singly);
+        System.out.printf("  DoublyLinked  (ArrayDeque+sync)    : %,12d ops/sec%n", doubly);
+        System.out.printf("  TwoLevel      (ThreadLocal+Global) : %,12d ops/sec  ← 当前实现%n", twoLevel);
     }
 
     @Test
@@ -266,15 +263,12 @@ class ObjectPoolBenchmark {
             wrapSingly(new SinglyLinkedPool<>(POOL_CAP, Item::new)), THREADS, opsPerThread);
         long doubly   = multiThreadThroughput(
             wrapDoubly(new DoublyLinkedPool<>(POOL_CAP, Item::new)), THREADS, opsPerThread);
-        long blocking = multiThreadThroughput(
-            wrapBlocking(new ObjectPool<>(POOL_CAP, Item::new)), THREADS, opsPerThread);
         long twoLevel = multiThreadThroughput(
             wrapBlocking(new ObjectPool<>(POOL_CAP, Item::new)), THREADS, opsPerThread);
 
-        System.out.printf("  SinglyLinked  (Treiber Stack CAS) : %,12d ops/sec%n", singly);
-        System.out.printf("  DoublyLinked  (ArrayDeque+sync)   : %,12d ops/sec%n", doubly);
-        System.out.printf("  BlockingQueue (ArrayBlockingQueue) : %,12d ops/sec%n", blocking);
-        System.out.printf("  TwoLevel      (ThreadLocal+Global) : %,12d ops/sec  ← 最优解%n", twoLevel);
+        System.out.printf("  SinglyLinked  (Treiber Stack CAS)  : %,12d ops/sec%n", singly);
+        System.out.printf("  DoublyLinked  (ArrayDeque+sync)    : %,12d ops/sec%n", doubly);
+        System.out.printf("  TwoLevel      (ThreadLocal+Global) : %,12d ops/sec  ← 当前实现%n", twoLevel);
     }
 
     @Test
@@ -285,14 +279,11 @@ class ObjectPoolBenchmark {
             wrapSingly(new SinglyLinkedPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
         long doublyP99   = p99Latency(
             wrapDoubly(new DoublyLinkedPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
-        long blockingP99 = p99Latency(
-            wrapBlocking(new ObjectPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
         long twoLevelP99 = p99Latency(
             wrapBlocking(new ObjectPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
 
-        System.out.printf("  SinglyLinked  (Treiber Stack CAS) : %,8d ns%n", singlyP99);
-        System.out.printf("  DoublyLinked  (ArrayDeque+sync)   : %,8d ns%n", doublyP99);
-        System.out.printf("  BlockingQueue (ArrayBlockingQueue) : %,8d ns%n", blockingP99);
-        System.out.printf("  TwoLevel      (ThreadLocal+Global) : %,8d ns  ← 最优解%n", twoLevelP99);
+        System.out.printf("  SinglyLinked  (Treiber Stack CAS)  : %,8d ns%n", singlyP99);
+        System.out.printf("  DoublyLinked  (ArrayDeque+sync)    : %,8d ns%n", doublyP99);
+        System.out.printf("  TwoLevel      (ThreadLocal+Global) : %,8d ns  ← 当前实现%n", twoLevelP99);
     }
 }

@@ -67,6 +67,7 @@ public final class ObjectPool<T extends ObjectPool.Pooled> {
     private final LongAdder borrowCount  = new LongAdder();
     private final LongAdder localHits    = new LongAdder();
     private final LongAdder globalHits   = new LongAdder();
+    private final LongAdder newAllocs    = new LongAdder();
 
     public ObjectPool(int globalCapacity, Supplier<T> factory) {
         this.globalCapacity = globalCapacity;
@@ -112,6 +113,7 @@ public final class ObjectPool<T extends ObjectPool.Pooled> {
         }
 
         // 全局池也空，直接 new
+        newAllocs.increment();
         return factory.get();
     }
 
@@ -129,12 +131,13 @@ public final class ObjectPool<T extends ObjectPool.Pooled> {
             return;
         }
 
-        // 慢路径：本地池满，批量归还 BATCH 个到全局池
+        // 慢路径：本地池满，批量归还 BATCH 个到全局池，腾出空间后再放入当前对象
         for (int i = 0; i < BATCH && !localPool.isEmpty(); i++) {
             T item = localPool.poll();
             if (!global.offer(item)) break; // 全局池满，丢弃
         }
-        localPool.offer(obj); // 当前对象放入腾出空间的本地池
+        // 归还后本地池已腾出空间（size < LOCAL_MAX），安全放入
+        localPool.offer(obj);
     }
 
     // ==================== 统计 ====================
@@ -151,14 +154,16 @@ public final class ObjectPool<T extends ObjectPool.Pooled> {
         return total == 0 ? 0.0 : (double) globalHits.sum() / total;
     }
 
-    /** 新分配率（= 1 - localHitRate - globalHitRate）。 */
+    /** 新分配率（精确统计，非推算）。 */
     public double newAllocRate() {
-        return Math.max(0.0, 1.0 - localHitRate() - globalHitRate());
+        long total = borrowCount.sum();
+        return total == 0 ? 0.0 : (double) newAllocs.sum() / total;
     }
 
     public long getBorrowCount()  { return borrowCount.sum();  }
     public long getLocalHits()    { return localHits.sum();    }
     public long getGlobalHits()   { return globalHits.sum();   }
+    public long getNewAllocs()    { return newAllocs.sum();    }
     public int  globalPoolSize()  { return global.size();      }
 
     /**
