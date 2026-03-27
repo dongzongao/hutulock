@@ -1,54 +1,73 @@
-# HutuLock
+<div align="center">
 
-> 基于 Raft 共识算法 + ZooKeeper 设计模式的高可用分布式锁
+# 🔒 HutuLock
+
+**基于 Raft 共识算法的高可用分布式锁服务**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-11%2B-orange.svg)](https://openjdk.org/)
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://python.org/)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB.svg)](https://python.org/)
 [![Go](https://img.shields.io/badge/Go-1.21%2B-00ADD8.svg)](https://go.dev/)
+[![Netty](https://img.shields.io/badge/Netty-4.1.129-green.svg)](https://netty.io/)
+
+*公平锁 · 看门狗续期 · 多语言 SDK · 生产就绪*
+
+</div>
 
 ---
 
-## 目录
+## ✨ 为什么选择 HutuLock？
 
-- [项目概述](#项目概述)
-- [模块结构](#模块结构)
-- [快速开始](#快速开始)
-- [客户端 SDK](#客户端-sdk)
-  - [Java SDK](#java-sdk)
-  - [Python SDK](#python-sdk)
-  - [Go SDK](#go-sdk)
-- [CLI 工具](#cli-工具)
-- [配置参考](#配置参考)
-- [技术细节](technical-details.md)
-- [安全指南](security.md)
-- [监控指南](metrics.md)
-- [架构决策](architecture.md)
-- [API 参考](api-reference.md)
-- [测试说明](testing.md)
+> 大多数分布式锁方案依赖 Redis 或 ZooKeeper 等外部中间件。HutuLock 将 Raft 共识引擎内嵌到锁服务本身，**无需任何外部依赖**，开箱即用。
 
----
+```
+客户端                    HutuLock 集群（3 节点）
+  │                       ┌─────────┐
+  │── LOCK order-lock ──▶ │ Leader  │──┐ AppendEntries
+  │◀─ OK /locks/.../seq-1 │ node1   │  ├──▶ Follower node2
+  │                       └─────────┘  └──▶ Follower node3
+  │   持锁期间每 10s 自动续期（看门狗）
+  │── RENEW order-lock ──▶
+  │── UNLOCK ────────────▶
+```
 
-## 项目概述
+**核心优势：**
 
-HutuLock 是一个生产级分布式锁服务，核心特性：
-
-| 特性 | 说明 |
-|------|------|
-| 高可用 | Raft 共识算法，3/5 节点集群，少数节点故障不影响服务 |
-| 公平锁 | ZooKeeper 顺序临时节点模式，FIFO 排队，避免羊群效应 |
-| 看门狗 | 客户端定时心跳续期，服务端 TTL 兜底，防止锁永久占用 |
-| 安全 | Token/HMAC 认证、ACL 授权、TLS 加密、限流、审计日志 |
-| 可观测 | Prometheus Metrics、结构化日志、事件总线 |
-| 多语言 SDK | Java / Python / Go，协议完全兼容 |
-| CLI | 交互式命令行工具，支持连接集群、管理锁、查看状态 |
-| IoC 容器 | 轻量级内置容器管理所有内存组件，支持生命周期和依赖注入 |
-| 代理增强 | JDK 动态代理模块，无侵入地为 SPI 接口添加日志、指标、重试 |
-| 可扩展 | 全接口化设计（SPI），所有组件可替换 |
+- **零外部依赖** — Raft 引擎内置，不依赖 Redis / ZooKeeper / etcd
+- **公平锁** — ZooKeeper 顺序临时节点模式，FIFO 排队，彻底避免羊群效应
+- **看门狗** — 客户端定时心跳续期，服务端 TTL 兜底，锁不会因网络抖动意外释放
+- **多语言** — Java / Python / Go SDK，同一套文本协议，互相兼容
+- **生产就绪** — TLS、Token/HMAC 认证、ACL 授权、限流、Prometheus Metrics、审计日志
 
 ---
 
-## 模块结构
+## 🏗️ 架构
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    HutuLock Server                       │
+│                                                         │
+│  ┌──────────┐   ┌──────────┐   ┌──────────────────┐    │
+│  │  Netty   │   │   Raft   │   │  ZNode Tree      │    │
+│  │ Pipeline │──▶│  Engine  │──▶│  (内存存储)       │    │
+│  │ TLS/Auth │   │ 3/5节点  │   │  顺序临时节点     │    │
+│  └──────────┘   └──────────┘   └──────────────────┘    │
+│       │                                │                │
+│  ┌────▼────┐                    ┌──────▼──────┐         │
+│  │Security │                    │   Session   │         │
+│  │ Context │                    │   Manager   │         │
+│  │Token/ACL│                    │  看门狗TTL  │         │
+│  └─────────┘                    └─────────────┘         │
+│                                                         │
+│  ┌──────────────────────────────────────────────┐       │
+│  │  IoC Container  │  EventBus  │  Prometheus   │       │
+│  └──────────────────────────────────────────────┘       │
+└─────────────────────────────────────────────────────────┘
+         ▲                ▲                ▲
+    Java SDK         Python SDK         Go SDK
+```
+
+**模块说明：**
 
 ```
 hutulock/
@@ -56,174 +75,66 @@ hutulock/
 ├── hutulock-spi/       服务接口契约（SPI）
 ├── hutulock-config/    配置加载（YAML / 代码）
 ├── hutulock-proxy/     JDK 动态代理（日志 / 指标 / 重试）
-├── hutulock-server/    服务端实现（含 IoC 容器）
+├── hutulock-server/    服务端实现（Raft + ZNode + Session）
 ├── hutulock-client/    Java 客户端 SDK
 ├── hutulock-cli/       交互式命令行工具
 └── sdk/
-    ├── python/         Python SDK（Python 3.8+，零依赖）
-    └── go/             Go SDK（Go 1.21+，零依赖）
-```
-
-**依赖关系：**
-
-```
-hutulock-model
-    ↑
-hutulock-spi  ←── hutulock-config
-    ↑    ↑              ↑
-    │  hutulock-proxy   │
-    │         ↑         │
-    └── hutulock-server ┘
-                        hutulock-client
-                              ↑
-                          hutulock-cli
+    ├── python/         Python SDK（零依赖）
+    └── go/             Go SDK（零依赖）
 ```
 
 ---
 
-## 快速开始
+## 🚀 快速开始
 
-### 构建
+### 1. 构建
 
 ```bash
+git clone https://github.com/hutulock/hutulock.git
+cd hutulock
 mvn clean package -DskipTests
 ```
 
-### 使用脚本启动（推荐）
-
-项目提供三个脚本，位于 `bin/` 目录：
-
-| 脚本 | 用途 |
-|------|------|
-| `bin/server.sh` | 启动单个服务节点（前台运行） |
-| `bin/cluster.sh` | 本地 3 节点集群一键管理（后台运行，开发/测试用） |
-| `bin/cli.sh` | 启动交互式命令行工具 |
-
----
-
-### bin/server.sh — 单节点启动
-
-```
-用法：./bin/server.sh <nodeId> <clientPort> <raftPort> [peer ...] [选项]
-
-选项：
-  --proxy <types>   启用代理增强，逗号分隔（logging / metrics / all）
-  --config <path>   指定外部 hutulock.yml 路径
-  --jvm <opts>      追加 JVM 参数（引号包裹）
-```
-
-**单节点（开发模式）：**
+### 2. 启动单节点（开发模式）
 
 ```bash
 ./bin/server.sh node1 8881 9881
 ```
 
-**开启日志 + 指标代理：**
-
-```bash
-./bin/server.sh node1 8881 9881 --proxy logging,metrics
-```
-
-**3 节点集群（分别在三台机器上执行）：**
-
-```bash
-./bin/server.sh node1 8881 9881 node2:192.168.1.2:9882 node3:192.168.1.3:9883
-./bin/server.sh node2 8882 9882 node1:192.168.1.1:9881 node3:192.168.1.3:9883
-./bin/server.sh node3 8883 9883 node1:192.168.1.1:9881 node2:192.168.1.2:9882
-```
-
-**带代理 + 自定义配置文件：**
-
-```bash
-./bin/server.sh node1 8881 9881 \
-  --proxy all \
-  --config /etc/hutulock/hutulock.yml \
-  --jvm "-Xmx1g"
-```
-
-启动后输出：
-
-```
-============================================
- HutuLock Server
- Node ID    : node1
- Client Port: 8881
- Raft Port  : 9881
- Peers      : none
- Proxy      : logging,metrics
- JAR        : .../hutulock-server-1.0.0.jar
- Log Dir    : .../logs
-============================================
-```
-
----
-
-### bin/cluster.sh — 本地集群管理
-
-```
-用法：./bin/cluster.sh <命令> [选项]
-
-命令：
-  start   [--proxy types]   后台启动 3 节点集群
-  stop                      停止所有节点
-  restart [--proxy types]   重启集群
-  status                    查看各节点运行状态
-  logs    [nodeId]          实时查看节点日志（默认 node1）
-```
-
-**启动集群：**
+### 3. 启动本地 3 节点集群
 
 ```bash
 ./bin/cluster.sh start
-```
-
-**查看状态：**
-
-```bash
 ./bin/cluster.sh status
-# HutuLock Cluster Status:
-#   node1: RUNNING  PID=12345  client=:8881  metrics=:9090  health=UP
-#   node2: RUNNING  PID=12346  client=:8882  metrics=:9091  health=UP
-#   node3: RUNNING  PID=12347  client=:8883  metrics=:9092  health=UP
 ```
 
-**停止集群：**
+```
+HutuLock Cluster Status:
+  node1: RUNNING  PID=12345  client=:8881  metrics=:9090  health=UP
+  node2: RUNNING  PID=12346  client=:8882  metrics=:9091  health=UP
+  node3: RUNNING  PID=12347  client=:8883  metrics=:9092  health=UP
+```
+
+### 4. 用 CLI 验证
 
 ```bash
-./bin/cluster.sh stop
+./bin/cli.sh 127.0.0.1:8881
+
+hutulock(disconnected)> connect 127.0.0.1:8881
+✓ Connected  Session: a3f8c2d1e4b5f6a7
+
+hutulock(a3f8c2d1)> lock order-lock
+✓ Lock acquired: order-lock [/locks/order-lock/seq-0000000001] in 8ms
+
+hutulock(a3f8c2d1)[1 lock(s)]> unlock order-lock
+✓ Lock released: order-lock
 ```
 
-集群默认端口分配：
-
-| 节点 | 客户端端口 | Raft 端口 | Metrics 端口 |
-|------|-----------|----------|-------------|
-| node1 | 8881 | 9881 | 9090 |
-| node2 | 8882 | 9882 | 9091 |
-| node3 | 8883 | 9883 | 9092 |
-
 ---
 
-## 客户端 SDK
+## 📦 客户端 SDK
 
-所有 SDK 使用相同的文本行协议（UTF-8），与服务端完全兼容。
-
-### 协议概览
-
-| 客户端发送 | 服务端响应 |
-|-----------|-----------|
-| `CONNECT [sessionId]` | `CONNECTED {sessionId}` |
-| `LOCK {name} {sessionId}` | `OK {name} {seqPath}` 或 `WAIT {name} {seqPath}` |
-| `RECHECK {name} {seqPath} {sessionId}` | `OK` 或 `WAIT` |
-| `UNLOCK {seqPath} {sessionId}` | `RELEASED {name}` |
-| `RENEW {name} {sessionId}` | `RENEWED {name}` |
-| — | `WATCH_EVENT {type} {path}`（服务端主动推送） |
-| — | `REDIRECT {leaderId}`（非 Leader 节点重定向） |
-
----
-
-### Java SDK
-
-**依赖（Maven）：**
+### Java
 
 ```xml
 <dependency>
@@ -232,8 +143,6 @@ mvn clean package -DskipTests
     <version>1.0.0</version>
 </dependency>
 ```
-
-**简单用法：**
 
 ```java
 HutuLockClient client = HutuLockClient.builder()
@@ -244,240 +153,164 @@ client.connect();
 
 boolean held = client.lock("order-lock");
 try {
-    // 临界区
+    // 临界区，看门狗自动续期
 } finally {
     client.unlock("order-lock");
 }
-client.close();
 ```
 
-**带看门狗的完整用法：**
-
-```java
-LockContext ctx = LockContext.builder("order-lock", client.getSessionId())
-    .ttl(30, TimeUnit.SECONDS)
-    .watchdogInterval(9, TimeUnit.SECONDS)   // 必须 < ttl/3
-    .onExpired(lockName -> abortCriticalSection())
-    .build();
-
-client.lock(ctx);
-try {
-    // 临界区，看门狗每 9s 自动续期
-} finally {
-    client.unlock(ctx);
-}
-```
-
----
-
-### Python SDK
-
-**安装：**
+### Python
 
 ```bash
 pip install hutulock
-# 或从源码
-pip install -e sdk/python
 ```
-
-**要求：** Python 3.8+，零外部依赖。
-
-**上下文管理器（推荐）：**
 
 ```python
 from hutulock import HutuLockClient
 
-with HutuLockClient(nodes=[("127.0.0.1", 8881), ("127.0.0.1", 8882)]) as client:
+with HutuLockClient(nodes=[("127.0.0.1", 8881)]) as client:
     with client.lock("order-lock") as token:
-        # 临界区
-        process_order()
+        process_order()  # 临界区
 ```
 
-**手动管理：**
-
-```python
-from hutulock import HutuLockClient
-
-client = HutuLockClient(
-    nodes=[("127.0.0.1", 8881), ("127.0.0.1", 8882)],
-    lock_timeout=30.0,        # 获取锁超时（秒），默认 30
-    watchdog_interval=10.0,   # 看门狗心跳间隔（秒），默认 10
-)
-client.connect()
-
-token = client.acquire("order-lock")
-try:
-    process_order()
-finally:
-    client.release(token)
-
-client.close()
-```
-
-**运行测试：**
-
-```bash
-cd sdk/python
-python3 -m unittest discover -s tests -v
-```
-
----
-
-### Go SDK
-
-**安装：**
+### Go
 
 ```bash
 go get github.com/hutulock/hutulock-go
 ```
 
-**要求：** Go 1.21+，零外部依赖（仅标准库）。
-
-**基本用法：**
-
 ```go
-import (
-    hutulock "github.com/hutulock/hutulock-go"
-    "context"
-)
-
-client, err := hutulock.New(hutulock.Config{
-    Nodes: []string{"127.0.0.1:8881", "127.0.0.1:8882"},
+client, _ := hutulock.New(hutulock.Config{
+    Nodes: []string{"127.0.0.1:8881"},
 })
-if err != nil {
-    log.Fatal(err)
-}
 defer client.Close()
 
-ctx := context.Background()
-
-token, err := client.Lock(ctx, "order-lock")
-if err != nil {
-    log.Fatal(err)
-}
+token, _ := client.Lock(ctx, "order-lock")
 defer client.Unlock(ctx, token)
-
 // 临界区
-processOrder()
-```
-
-**完整配置：**
-
-```go
-client, err := hutulock.New(hutulock.Config{
-    Nodes:            []string{"127.0.0.1:8881", "127.0.0.1:8882"},
-    ConnectTimeout:   5 * time.Second,   // 默认 5s
-    LockTimeout:      30 * time.Second,  // 默认 30s
-    WatchdogInterval: 10 * time.Second,  // 默认 10s
-})
-```
-
-**带超时的 context：**
-
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-defer cancel()
-
-token, err := client.Lock(ctx, "order-lock")
-```
-
-**运行测试：**
-
-```bash
-cd sdk/go
-go test ./... -v
 ```
 
 ---
 
-## CLI 工具
+## 🔐 安全特性
 
-### bin/cli.sh — 交互式命令行
+| 特性 | 说明 |
+|------|------|
+| Token 认证 | 静态 Token 校验，适合内网服务 |
+| HMAC 认证 | 基于共享密钥的消息签名，防重放 |
+| ACL 授权 | 细粒度资源权限控制 |
+| TLS 加密 | 支持自签名证书（开发）和 PEM 证书（生产） |
+| 限流 | 令牌桶算法，按客户端限制 QPS |
+| 审计日志 | 所有锁操作写入独立审计日志文件 |
 
-```
-用法：./bin/cli.sh [host:port ...] [选项]
+生产环境最小安全配置：
 
-选项：
-  --jvm <opts>   追加 JVM 参数（引号包裹）
-```
-
-**启动时自动连接集群：**
-
-```bash
-./bin/cli.sh 127.0.0.1:8881 127.0.0.1:8882 127.0.0.1:8883
-```
-
-### 支持命令
-
-| 命令 | 格式 | 说明 |
-|------|------|------|
-| `connect` | `connect <host:port> [...]` | 连接集群节点 |
-| `lock` | `lock <lockName> [timeoutSec]` | 获取锁（默认 30s 超时） |
-| `unlock` | `unlock <lockName>` | 释放锁 |
-| `renew` | `renew <lockName>` | 手动续期 |
-| `status` | `status` | 查看连接状态和持有的锁 |
-| `disconnect` | `disconnect` | 断开连接 |
-| `help` | `help [command]` | 显示帮助 |
-| `exit` | `exit` | 退出 |
-
-### 交互示例
-
-```
-hutulock(disconnected)> connect 127.0.0.1:8881
-✓ Connected to: 127.0.0.1:8881
-  Session ID: a3f8c2d1e4b5f6a7
-
-hutulock(a3f8c2d1)> lock order-lock
-  Acquiring lock [order-lock] (timeout=30s)...
-✓ Lock acquired: order-lock [/locks/order-lock/seq-0000000001] in 12ms
-
-hutulock(a3f8c2d1)[1 lock(s)]> unlock order-lock
-✓ Lock released: order-lock
-
-hutulock(a3f8c2d1)> exit
-Bye!
+```yaml
+hutulock:
+  server:
+    security:
+      enabled: true
+      tls:
+        enabled: true
+        certFile: /etc/hutulock/server.crt
+        keyFile:  /etc/hutulock/server.key
+      rateLimit:
+        qps: 100
+        burst: 200
 ```
 
 ---
 
-## 配置参考
+## 📊 可观测性
 
-在 classpath 放置 `hutulock.yml`（不存在则使用全部默认值）：
+Prometheus 指标（默认 `:9090/metrics`）：
+
+```
+# 锁操作
+hutulock_lock_acquired_total
+hutulock_lock_released_total
+hutulock_lock_waiting_total
+hutulock_lock_acquire_duration_ms
+
+# Raft
+hutulock_raft_propose_success_total
+hutulock_raft_propose_timeout_total
+hutulock_raft_election_started_total
+
+# 会话
+hutulock_session_created_total
+hutulock_session_expired_total
+```
+
+---
+
+## ⚙️ 配置参考
 
 ```yaml
 hutulock:
   server:
     raft:
-      electionTimeoutMin: 150   # 选举超时最小值（ms）
-      electionTimeoutMax: 300   # 选举超时最大值（ms）
-      heartbeatInterval: 50     # 心跳间隔（ms），必须 < electionTimeoutMin/3
-      proposeTimeout: 10000     # Propose 超时（ms）
-      proposeRetryCount: 3      # Propose 失败重试次数
-      proposeRetryDelay: 500    # 重试间隔（ms）
+      electionTimeoutMin: 150   # ms，选举超时下限
+      electionTimeoutMax: 300   # ms，选举超时上限
+      heartbeatInterval: 50     # ms，必须 < electionTimeoutMin/3
+      proposeTimeout: 10000     # ms，写入超时
     watchdog:
-      ttl: 30000                # 看门狗 TTL（ms），超时无心跳则强制释放锁
-      scanInterval: 1000        # 扫描间隔（ms）
+      ttl: 30000                # ms，会话 TTL
+      scanInterval: 1000        # ms，过期扫描间隔
     network:
-      soBacklog: 128
       maxFrameLength: 4096
     metrics:
       enabled: true
-      port: 9090                # Prometheus scrape 端口
-    security:
-      enabled: false            # 生产环境必须设为 true
-      tls:
-        enabled: false
-        certFile: ""            # PEM 格式证书路径
-        keyFile: ""             # PEM 格式私钥路径
-        selfSigned: false       # 仅开发/测试使用
-      rateLimit:
-        qps: 100                # 每客户端每秒最大请求数
-        burst: 200              # 突发容量
-
+      port: 9090
   client:
-    connectTimeout: 3000        # 连接超时（ms）
-    lockTimeout: 30             # 获取锁默认超时（秒）
+    connectTimeout: 3000
+    lockTimeout: 30             # 秒
     watchdog:
-      ttl: 30000                # 看门狗 TTL（ms），应与服务端一致
-      interval: 9000            # 心跳间隔（ms），必须 < ttl/3
+      interval: 9000            # ms，必须 < ttl/3
 ```
+
+---
+
+## 🗺️ 路线图
+
+- [x] Raft 共识引擎（Leader 选举 + 日志复制）
+- [x] ZooKeeper 顺序临时节点公平锁
+- [x] 看门狗自动续期
+- [x] TLS / Token / HMAC / ACL 安全体系
+- [x] Prometheus Metrics
+- [x] Java / Python / Go 多语言 SDK
+- [x] 交互式 CLI
+- [ ] Raft 日志持久化（WAL）
+- [ ] 动态集群成员变更
+- [ ] Web 管理控制台
+- [ ] Kubernetes Operator
+
+---
+
+## 📄 文档
+
+| 文档 | 说明 |
+|------|------|
+| [架构设计](architecture.md) | Raft 实现细节、ZNode 树、IoC 容器 |
+| [API 参考](api-reference.md) | 完整协议文档 |
+| [安全指南](security.md) | 认证、授权、TLS 配置 |
+| [监控指南](metrics.md) | Prometheus 指标说明 |
+| [测试说明](testing.md) | 单元测试、集成测试、压测 |
+| [技术细节](technical-details.md) | 性能优化、内存管理 |
+
+---
+
+## 🤝 贡献
+
+欢迎 PR 和 Issue。提交前请确保：
+
+```bash
+mvn test          # 所有测试通过
+mvn checkstyle:check  # 代码风格检查
+```
+
+---
+
+## 📜 License
+
+[Apache License 2.0](../LICENSE)
