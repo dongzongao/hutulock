@@ -62,18 +62,19 @@ public class HutuLockCli {
             }
 
             // 主 REPL 循环
-            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-            while (true) {
-                System.out.print(buildPrompt(ctx));
-                System.out.flush();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
+                while (true) {
+                    System.out.print(buildPrompt(ctx));
+                    System.out.flush();
 
-                String line = reader.readLine();
-                if (line == null) break; // EOF（Ctrl+D）
+                    String line = reader.readLine();
+                    if (line == null) break; // EOF（Ctrl+D）
 
-                line = line.trim();
-                if (line.isEmpty()) continue;
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
 
-                if (!processCommand(line, ctx)) break;
+                    if (!processCommand(line, ctx)) break;
+                }
             }
         }
 
