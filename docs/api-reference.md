@@ -174,6 +174,17 @@ eventBus.subscribe(HutuEvent.class, event ->
     auditLog.write(event.getSourceNodeId(), event.getEventType(), event.getTimestamp()));
 ```
 
+### 注册持久 Watcher
+
+```java
+// One-shot Watcher（默认，触发一次后自动注销）
+zNodeStorage.watch(path, channel);
+
+// 持久 Watcher（触发后不注销，参考 ZooKeeper 3.6 addWatch PERSISTENT）
+// 适合需要持续监听锁队列变化的场景
+watcherRegistry.registerPersistent(ZNodePath.of("/locks/order-lock"), channel);
+```
+
 ---
 
 ## IoC 容器 API

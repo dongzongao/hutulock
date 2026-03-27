@@ -305,8 +305,15 @@ hutulock:
 - [x] 看门狗自动续期
 - [x] TLS / Token / HMAC / ACL 安全体系
 - [x] Prometheus Metrics
-- [x] Java / Python / Go 多语言 SDK
+- [x] Java / Python / Go / PHP 多语言 SDK
 - [x] 交互式 CLI
+- [x] Zab 风格 Recovery Phase（Leader 上任同步屏障）
+- [x] Raft Fast Backup（O(term数) 日志对齐）
+- [x] Raft 批量 Pipeline + inFlight 流控
+- [x] RaftLog ReadWriteLock（读写分离）
+- [x] DelayQueue propose 超时管理
+- [x] 持久 Watcher（参考 ZooKeeper 3.6 addWatch）
+- [x] ZNode czxid/mzxid（事务 ID，线性一致读基础）
 - [ ] Raft 日志持久化（WAL）
 - [ ] 动态集群成员变更
 - [ ] Web 管理控制台

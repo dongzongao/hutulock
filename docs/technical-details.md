@@ -12,8 +12,9 @@
 8. [网络协议](#8-网络协议)
 9. [IoC 容器](#9-ioc-容器)
 10. [代理模块](#10-代理模块)
-11. [兜底机制](#11-兜底机制)
-12. [模块依赖图](#12-模块依赖图)
+11. [内存管理](#11-内存管理)
+12. [兜底机制](#12-兜底机制)
+13. [模块依赖图](#13-模块依赖图)
 
 ---
 
@@ -58,8 +59,8 @@
   │── UNLOCK /locks/.../seq-N sid ──→│
   │                                  │ 1. 验证 sessionId 是节点所有者
   │                                  │ 2. 删除 seq-N 节点
-  │                                  │ 3. 触发 NODE_DELETED 事件
-  │                                  │    → 通知监听 seq-N 的下一个等待者
+  │                                  │ 3. 触发 NODE_DELETED 事件（通知下一个等待者）
+  │                                  │ 4. 触发父节点 CHILDREN_CHANGED 事件
   │←── RELEASED order-lock ──────────│
 ```
 
@@ -91,35 +92,64 @@ FOLLOWER ──(选举超时)──→ CANDIDATE ──(多数票)──→ LEAD
 - 选举超时：随机 `[electionTimeoutMin, electionTimeoutMax]`（默认 150~300ms）
 - 随机化避免分票（Split Vote）
 - 候选人向所有节点发送 `VOTE_REQ`，收到多数派（`n/2 + 1`）投票后成为 Leader
+- 连续选举超过 10 次后强制冷却一个超时周期，防止网络分区下的选举风暴
 
-### 日志复制
+### Zab 风格 Recovery Phase（Leader 上任同步）
+
+```
+becomeLeader()
+  → leaderReady = false（暂不开放 propose）
+  → 广播第一轮心跳（空 AppendEntries）
+  → Follower ack 回来 → onSyncAck() 计数
+  → 达到多数派 → completeSyncPhase() → leaderReady = true
+  → 触发 pendingSyncQueue 里排队的 propose
+```
+
+Leader 上任期间收到的 propose 排入 `pendingSyncQueue`，同步完成后批量触发，避免第一批写入触发多轮 nextIndex 回退。
+
+### 日志复制与 Fast Backup
 
 ```
 Leader                    Follower
   │                           │
   │── APPEND_REQ ────────────→│  (携带日志条目)
-  │←── APPEND_RESP ───────────│  (success=true/false)
+  │←── APPEND_RESP ───────────│  (success + conflictTerm + conflictIndex)
   │                           │
   │  多数派确认后 commit        │
   │── 状态机 apply ────────────│
 ```
 
-**日志条目格式（内部序列化）：**
+**Fast Backup（§5.3 优化）：** Follower 拒绝时携带冲突 term 及其第一条索引，Leader 直接跳到该位置，日志对齐从 O(日志长度) 降为 O(term数)。
+
+**APPEND_RESP 格式（含 Fast Backup 字段）：**
 ```
-{index}:{term}:{command}
-多条目用 | 分隔，| 在 command 中转义为 \|
+APPEND_RESP {term} {success} {matchIndex} {nodeId} {conflictTerm} {conflictIndex}
 ```
+
+### 批量 Pipeline 与 inFlight 流控
+
+- `flushPipeline()`：心跳和 propose 触发时统一调用，合并发送，减少 RPC 次数
+- `RaftPeer.inFlight`：上一条 AppendEntries 未收到 ack 时跳过该 peer，防止对慢速 Follower 无限堆积
+- ack 回来后若还有积压日志立即补发（pipeline 效果）
+
+### RaftLog 并发模型
+
+使用 `ReadWriteLock` 替代全局 `synchronized`：
+- 读操作（`get/getFrom/termAt/lastIndex/lastTerm`）：共享锁，多 Follower 并发读不互斥
+- 写操作（`append/truncateFrom`）：独占锁
+
+### propose 超时管理
+
+使用 `DelayQueue<ProposeDeadline>` 替代全量 Map 扫描：
+- 每个 propose 注册一个 `ProposeDeadline` 条目
+- `cleanupTimedOutProposes` 只 poll 真正到期的条目，O(k log n) vs O(n)
 
 ### Leader 切换时的 Propose 处理
 
 - Leader 降级时，所有 `pendingCommits` 立即 `completeExceptionally("LEADER_CHANGED")`
-- `LockServerHandler` 捕获后等待 500ms 重试，最多 3 次
-- 超时未 commit 的 propose 由定时任务清理（默认 10s）
-
-### 心跳
-
-- Leader 每 `heartbeatIntervalMs`（默认 50ms）发送一次心跳（空的 APPEND_REQ）
-- Follower 收到心跳后重置选举计时器
+- 重置所有 peer 的 `inFlight` 标志和 `conflictTerm/conflictIndex`
+- 清理 `pendingSyncQueue` 中排队的 propose
+- `LockServerHandler` 捕获后等待 `proposeRetryDelayMs` 重试，最多 `proposeRetryCount` 次
 
 ---
 
@@ -140,12 +170,17 @@ Leader                    Follower
 - 序号格式：10 位补零，如 `seq-0000000001`
 - 序号单调递增，不会重置（即使节点被删除）
 
-### ZNodePath 规则
+### ZNode Stat（元数据）
 
-- 必须以 `/` 开头
-- 不能以 `/` 结尾（根路径除外）
-- 路径段不能为空（不允许 `//`）
-- 示例：`/locks/order-lock/seq-0000000001`
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `version` | int | 数据版本，每次 setData 递增 |
+| `createTime` | long | 创建时间戳（ms） |
+| `modifyTime` | long | 最后修改时间戳（ms） |
+| `czxid` | long | 创建时的 Raft logIndex（参考 ZooKeeper Stat.czxid） |
+| `mzxid` | long | 最后修改时的 Raft logIndex（参考 ZooKeeper Stat.mzxid） |
+
+`czxid/mzxid` 为线性一致读奠定基础：客户端可携带 `czxid` 发起读请求，服务端确保 `lastApplied >= czxid` 后再响应，避免读到旧 Leader 的过期数据。
 
 ---
 
@@ -166,18 +201,12 @@ CONNECTING ──→ CONNECTED ──→ RECONNECTING ──→ EXPIRED
 - 客户端在 `sessionTimeout` 内重连可恢复会话（临时节点不被删除）
 - 超时未重连才触发会话过期，清理临时节点
 
-### 会话 ID 生成
-
-```java
-UUID.randomUUID().toString().replace("-", "").substring(0, 16)
-// 示例：a3f8c2d1e4b5f6a7
-```
-
-### 会话过期扫描
+### 会话过期扫描（PriorityQueue + 重新入队）
 
 - 后台线程每 `watchdogScanIntervalMs`（默认 1s）扫描一次
-- 过期条件：`now - lastHeartbeat > sessionTimeout`
-- 过期时：清理临时节点 → 触发 `NODE_DELETED` → 通知等待者
+- 使用 `PriorityQueue` 按 `expireTime` 排序，只检查队头，O(k log s) 而非 O(s)
+- **关键：** `heartbeat()` 调用 `remove + offer` 重新入队，确保续期后队列位置更新（参考 ZooKeeper ExpiryQueue 设计）
+- 过期时：清理临时节点 → 触发 `NODE_DELETED` → 通知等待者 → 推送 `SESSION_EXPIRED` 给客户端
 
 ---
 
@@ -195,59 +224,40 @@ UUID.randomUUID().toString().replace("-", "").substring(0, 16)
                               强制释放锁，通知下一个等待者
 ```
 
-### 客户端看门狗（LockContext）
-
-- 获锁成功后自动启动
-- 每 `watchdogIntervalMs` 发送 `RENEW lockName sessionId`
-- 连接断开时触发 `onExpired` 回调
-- 约束：`watchdogInterval < ttl/3`（确保至少有 3 次续期机会）
-
-### 服务端看门狗（WatchdogContext）
-
-- 每把锁维护独立的 `WatchdogContext`
-- 记录：持有者 clientId、TTL、最后心跳时间（`AtomicLong`）
-- 扫描线程检测超时，强制释放并通知等待队列
-
-### 看门狗状态
-
-```
-HELD ──(超时)──→ EXPIRED
-  │
-  └──(正常释放)──→ RELEASED
-```
+**约束：** `watchdogInterval < ttl/3`（确保至少有 3 次续期机会）
 
 ---
 
 ## 6. Watcher 事件系统
 
-### 两种事件通知的区别
+### 两种 Watcher 模式
 
-| 特性 | WatcherRegistry（网络推送） | EventBus（内部总线） |
-|------|--------------------------|---------------------|
-| 订阅方 | 网络客户端（Channel） | 内部 Java 组件 |
-| 触发次数 | One-shot（触发后自动注销） | 持久订阅 |
-| 传输方式 | Netty Channel 推送 | 内存队列异步分发 |
-| 用途 | 锁等待通知 | 组件解耦、审计、监控 |
+| 模式 | 注册方法 | 触发后行为 | 适用场景 |
+|------|---------|-----------|---------|
+| One-shot | `register()` | 自动注销 | 锁等待通知（默认） |
+| 持久 | `registerPersistent()` | 不注销，持续触发 | 监听锁队列整体变化 |
+
+持久 Watcher 参考 ZooKeeper 3.6 `addWatch PERSISTENT` 模式，连接断开时通过 `removeChannel` 统一清理。
 
 ### WatchEvent 类型
 
 | 类型 | 触发时机 |
 |------|---------|
-| NODE_CREATED | ZNode 被创建 |
-| NODE_DELETED | ZNode 被删除（锁释放的核心信号） |
-| NODE_DATA_CHANGED | ZNode 数据变更 |
-| SESSION_EXPIRED | 会话过期 |
+| `NODE_CREATED` | ZNode 被创建 |
+| `NODE_DELETED` | ZNode 被删除（锁释放的核心信号） |
+| `NODE_DATA_CHANGED` | ZNode 数据变更 |
+| `CHILDREN_CHANGED` | 子节点列表变化（增删子节点时触发父节点，参考 ZooKeeper NodeChildrenChanged） |
+| `SESSION_EXPIRED` | 会话过期 |
 
 ### Watcher 触发流程
 
 ```
 ZNodeTree.delete(path)
     → WatcherRegistry.fire(path, NODE_DELETED)
-        → 找到所有监听该路径的 Channel（One-shot，remove）
-        → 向每个活跃 Channel 推送 "WATCH_EVENT NODE_DELETED /path\n"
-            → 客户端 LockClientHandler 解析
-                → 触发注册的 Consumer<WatchEvent> 回调
-                    → 发送 RECHECK 命令
+        → One-shot watcher：remove 后推送
+        → 持久 watcher：推送但不 remove
+    → WatcherRegistry.fire(parent, CHILDREN_CHANGED)
+        → 通知监听父节点子列表变化的 watcher
 ```
 
 ---
@@ -270,12 +280,6 @@ HutuEvent（抽象基类）
 ├── RaftEvent     ELECTION_STARTED / BECAME_LEADER / STEPPED_DOWN / LOG_COMMITTED
 └── ZNodeEvent    CREATED / DELETED / DATA_CHANGED
 ```
-
-### 订阅者匹配规则
-
-- 精确匹配：订阅 `LockEvent.class` 只收到 `LockEvent`
-- 父类匹配：订阅 `HutuEvent.class` 收到所有事件
-- 遍历事件类的继承链实现
 
 ---
 
@@ -317,7 +321,9 @@ HutuEvent（抽象基类）
 | VOTE_REQ | `VOTE_REQ {term} {candidateId} {lastLogIndex} {lastLogTerm}` |
 | VOTE_RESP | `VOTE_RESP {term} {granted}` |
 | APPEND_REQ | `APPEND_REQ {term} {leaderId} {prevLogIndex} {prevLogTerm} {leaderCommit} {entries}` |
-| APPEND_RESP | `APPEND_RESP {term} {success} {matchIndex}` |
+| APPEND_RESP | `APPEND_RESP {term} {success} {matchIndex} {nodeId} {conflictTerm} {conflictIndex}` |
+
+> `conflictTerm/conflictIndex` 为 Fast Backup 字段，`success=false` 时有效，`-1` 表示无冲突信息（兼容旧版本）。
 
 ---
 
@@ -333,15 +339,6 @@ HutuEvent（抽象基类）
 | `ApplicationContext` | 容器核心：延迟实例化、单例缓存、生命周期调度 |
 | `Lifecycle` | 生命周期接口（`start()` / `shutdown()`） |
 | `ServerBeanFactory` | 服务端专属配置，集中声明所有 Bean 及依赖关系 |
-
-### ApplicationContext 工作流程
-
-```
-register(BeanDefinition)  → 记录定义，不触发实例化
-getBean(name/type)        → 首次调用时执行工厂方法，结果缓存为单例
-start()                   → 按注册顺序实例化所有 Bean，调用 Lifecycle.start()
-close()                   → 按注册逆序调用 Lifecycle.shutdown()
-```
 
 ### 代理 Bean 与 Lifecycle 分离模式
 
@@ -363,21 +360,6 @@ ctx.register(BeanDefinition.of("sessionTracker", SessionTracker.class,
 
 ## 10. 代理模块
 
-### 模块结构
-
-```
-hutulock-proxy/
-  api/
-    Proxiable.java      代理类型枚举（LOGGING / METRICS / RETRY）
-    ProxyCatalog.java   各 SPI 接口支持的代理类型声明
-  handler/
-    LoggingHandler.java  方法调用日志（入参、耗时、异常）
-    MetricsHandler.java  调用次数、失败次数、平均耗时统计
-    RetryHandler.java    失败自动重试
-  support/
-    ProxyBuilder.java    链式构建 API
-```
-
 ### ProxyBuilder 链式 API
 
 ```java
@@ -391,40 +373,45 @@ ZNodeStorage proxied = ProxyBuilder.wrap(ZNodeStorage.class, realImpl)
 // 带重试（LockService 专用）
 LockService retried = ProxyBuilder.wrap(LockService.class, lockService)
     .withLogging()
-    .withRetry(3, 500L,
-        Set.of("release", "shutdown"),   // 不重试的方法
-        RuntimeException.class)
+    .withRetry(3, 500L, Set.of("release", "shutdown"), RuntimeException.class)
     .build();
-
-// 获取指标快照
-ProxyBuilder.MetricsHolder<ZNodeStorage> holder = new ProxyBuilder.MetricsHolder<>();
-ZNodeStorage proxied = ProxyBuilder.wrap(ZNodeStorage.class, realImpl)
-    .withMetrics(holder)
-    .build();
-Map<String, String> stats = holder.snapshot();
-// {"ZNodeStorage.create" → "calls=42 errors=0 avgMs=3", ...}
-```
-
-### 各 SPI 接口支持的代理类型
-
-| SPI 接口 | Logging | Metrics | Retry | 说明 |
-|----------|:-------:|:-------:|:-----:|------|
-| `ZNodeStorage` | ✓ | ✓ | | 读写操作频繁，日志+指标均有价值 |
-| `LockService` | ✓ | ✓ | ✓ | 核心业务，全量支持 |
-| `SessionTracker` | ✓ | | | 生命周期管理，日志追踪即可 |
-| `EventBus` | ✓ | | | 事件流追踪 |
-| `WatcherRegistry` | ✓ | | | 注册/触发追踪 |
-
-### LoggingHandler 日志格式
-
-```
-DEBUG [create] args=[/locks/order-lock, EPHEMERAL_SEQ, ...] → /locks/order-lock/seq-0000000001 (3ms)
-WARN  [create] args=[/locks/order-lock, ...] threw HutuLockException (1ms): parent not found
 ```
 
 ---
 
-## 11. 兜底机制
+## 11. 内存管理
+
+### MemoryManager
+
+统一管理两个内存优化组件，注册到 IoC 容器作为单例：
+
+| 组件 | 作用 |
+|------|------|
+| `ZNodePathCache` | ZNodePath 对象缓存（String intern 模式），消除重复 new |
+| `ObjectPool<PooledLockToken>` | LockToken 对象池（两级：ThreadLocal + 全局），减少 GC 压力 |
+
+### ZNodePathCache
+
+- 最大缓存 8192 条，超出后降级为直接 new
+- 预计算 10 万个顺序节点序号字符串（`SEQ_STRINGS`），避免 `String.format`
+- 顺序节点删除时主动 evict，防止内存泄漏
+
+### ObjectPool（两级池）
+
+```
+borrow()
+  → ThreadLocal ArrayDeque（无锁，O(1)）
+  → 本地池空 → 从全局 ArrayBlockingQueue 批量转移 16 个
+  → 全局池也空 → factory.get() 直接 new
+
+release()
+  → ThreadLocal ArrayDeque（无锁，O(1)）
+  → 本地池满（>32）→ 批量归还 16 个到全局池
+```
+
+---
+
+## 12. 兜底机制
 
 ### 多层兜底设计
 
@@ -438,30 +425,35 @@ WARN  [create] args=[/locks/order-lock, ...] threw HutuLockException (1ms): pare
 层级 3：Session 过期清理
     TCP 断开后 30s 内未重连，清理所有临时节点
 
-层级 4：Raft propose 超时清理
+层级 4：Raft propose 超时清理（DelayQueue）
     10s 未 commit 的 propose 自动 fail，防止内存泄漏
 
 层级 5：Leader 切换时 fail pending proposes
     降级时立即通知所有等待中的 propose，触发客户端重试
+
+层级 6：Raft 消息格式兜底
+    APPEND_REQ/RESP、VOTE_REQ/RESP 均有字段数量校验和 NumberFormatException 捕获
+
+层级 7：连续选举上限
+    超过 10 次连续选举后强制冷却，防止网络分区下的选举风暴
 ```
 
-### 等待队列孤儿处理
+### Raft 各模块兜底汇总
 
-当等待者的 Channel 断开时：
-1. `WatchdogManager.handleExpired()` 弹出等待队列
-2. 检查 `channel.isActive()`
-3. 若失活，跳过该等待者，继续弹出下一个
-4. 直到找到活跃的等待者或队列为空
-
-### 客户端重连策略
-
-1. 收到 `REDIRECT` → 随机打乱节点列表，轮询重连
-2. 重连成功后尝试恢复旧 sessionId
-3. 若 session 已过期，创建新 session
+| 模块 | 兜底点 |
+|------|--------|
+| `RaftPeer.send()` | 发送失败记录 warn，不再静默丢弃 |
+| `RaftPeerHandler` | `channelInactive` 记录断连，`exceptionCaught` 关闭 channel 触发自动重连 |
+| `RaftNode.handlePeerMessage()` | 空消息守卫 + 整体 try/catch，异常不传播到 Netty pipeline |
+| `RaftNode.startRaftServer()` | 端口绑定失败打印明确错误日志 |
+| `RaftElection.startElection()` | 连续选举计数上限，超限强制冷却 |
+| `RaftElection.handleVoteReq/Resp()` | 字段数量校验，格式不合法直接 warn 并 return |
+| `RaftReplication.propose()` | 非 Leader 时按配置重试；Leader 未就绪时排队 |
+| `RaftReplication.handleAppendReq/Resp()` | 字段数量校验 + NumberFormatException 捕获 |
 
 ---
 
-## 12. 模块依赖图
+## 13. 模块依赖图
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -474,7 +466,8 @@ WARN  [create] args=[/locks/order-lock, ...] threw HutuLockException (1ms): pare
 │                                                          │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐  │
 │  │ RaftNode │  │LockMgr   │  │SessionMgr│  │ZNode   │  │
-│  │          │  │(Default) │  │(Default) │  │Tree    │  │
+│  │ Election │  │(Default) │  │(Default) │  │Tree    │  │
+│  │ Replicat.│  │          │  │          │  │        │  │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └───┬────┘  │
 │       │              │              │             │       │
 │  ┌────▼─────────────▼──────────────▼─────────────▼────┐ │
@@ -486,36 +479,8 @@ WARN  [create] args=[/locks/order-lock, ...] threw HutuLockException (1ms): pare
 │                         │                                 │
 │  ┌──────────────────────▼───────────────────────────────┐ │
 │  │                 hutulock-model                        │ │
-│  │  ZNode  ZNodePath  Session  WatchEvent  Message       │ │
+│  │  ZNode(czxid/mzxid)  ZNodePath  Session              │ │
+│  │  WatchEvent(CHILDREN_CHANGED)  Message                │ │
 │  └───────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│                    hutulock-proxy                        │
-│  ProxyBuilder  LoggingHandler  MetricsHandler            │
-│  RetryHandler  ProxyCatalog                              │
-│       ↓ 依赖                                             │
-│  hutulock-spi                                            │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│                    hutulock-client                       │
-│  HutuLockClient  LockContext  LockClientHandler          │
-│       ↓ 依赖                                             │
-│  hutulock-spi + hutulock-model + hutulock-config         │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│                    hutulock-cli                          │
-│  HutuLockCli  CliContext  CliCommand                     │
-│       ↓ 依赖                                             │
-│  hutulock-client                                         │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│                    hutulock-config                       │
-│  YamlConfigProvider  ServerProperties  ClientProperties  │
-│       ↓ 依赖                                             │
-│  hutulock-model                                          │
 └─────────────────────────────────────────────────────────┘
 ```
