@@ -8,7 +8,7 @@ hutulock:
       electionTimeoutMin: 150
       electionTimeoutMax: 300
       # 心跳间隔（毫秒），应 < electionTimeoutMin/3
-      heartbeatInterval: 50
+      heartbeatInterval: 45
       # Propose 超时（毫秒）
       proposeTimeout: 10000
       # Propose 失败重试
@@ -66,4 +66,4 @@ hutulock:
       # 看门狗 TTL（毫秒），应与服务端一致
       ttl: 30000
       # 心跳间隔（毫秒），应 < ttl/3
-      interval: 10000
+      interval: 9000
