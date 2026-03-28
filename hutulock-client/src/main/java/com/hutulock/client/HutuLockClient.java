@@ -301,6 +301,98 @@ public class HutuLockClient implements AutoCloseable {
         }
     }
 
+    // ==================== Optimistic locking API ====================
+
+    /**
+     * Read data and version from a ZNode path.
+     *
+     * <p>Use this to implement optimistic locking as a replacement for
+     * MySQL {@code SELECT data, version FROM t WHERE id = ?}.
+     *
+     * @param path ZNode path, e.g. {@code /resources/order-123}
+     * @return versioned data, or null if the node does not exist
+     */
+    public VersionedData getData(String path) throws Exception {
+        CompletableFuture<Message> future = handler.registerRequest("GET_DATA:" + path);
+        channel.writeAndFlush(
+            Message.of(CommandType.GET_DATA, path, sessionId).serialize() + "\n");
+
+        Message resp = future.get(10, TimeUnit.SECONDS);
+        if (resp.getType() == CommandType.ERROR) return null;
+
+        // Response: DATA <path> <version> <base64-data>
+        int version = Integer.parseInt(resp.arg(1));
+        byte[] data = resp.argCount() > 2
+            ? java.util.Base64.getDecoder().decode(resp.arg(2))
+            : new byte[0];
+        return new VersionedData(path, data, version);
+    }
+
+    /**
+     * Write data to a ZNode with optimistic version check.
+     *
+     * <p>Replaces MySQL {@code UPDATE t SET data=? WHERE id=? AND version=?}.
+     *
+     * @param path    ZNode path
+     * @param data    new data
+     * @param version expected current version (from a prior {@link #getData} call)
+     * @return true if write succeeded, false if version mismatch (retry needed)
+     */
+    public boolean setData(String path, byte[] data, int version) throws Exception {
+        String encoded = java.util.Base64.getEncoder().encodeToString(data);
+        CompletableFuture<Message> future = handler.registerRequest("SET_DATA:" + path);
+        channel.writeAndFlush(
+            Message.of(CommandType.SET_DATA, path, String.valueOf(version), encoded, sessionId)
+                   .serialize() + "\n");
+
+        Message resp = future.get(10, TimeUnit.SECONDS);
+        return resp.getType() == CommandType.OK;
+    }
+
+    /** Convenience overload for String data. */
+    public boolean setData(String path, String data, int version) throws Exception {
+        return setData(path, data.getBytes(java.nio.charset.StandardCharsets.UTF_8), version);
+    }
+
+    /**
+     * Optimistic update with automatic retry.
+     *
+     * <p>Reads current data, applies {@code updater}, writes back with version check.
+     * Retries up to {@code maxRetries} times on VERSION_MISMATCH.
+     *
+     * <pre>{@code
+     *   // Replace MySQL optimistic lock pattern:
+     *   boolean ok = client.optimisticUpdate("/resources/order-123", maxRetries, current -> {
+     *       Order order = deserialize(current.getData());
+     *       order.setStatus("PAID");
+     *       return serialize(order);
+     *   });
+     * }</pre>
+     *
+     * @param path       ZNode path
+     * @param maxRetries max retry attempts on version conflict
+     * @param updater    function that receives current data and returns new data
+     * @return true if update succeeded within maxRetries attempts
+     */
+    public boolean optimisticUpdate(String path, int maxRetries,
+                                    java.util.function.Function<VersionedData, byte[]> updater)
+            throws Exception {
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            VersionedData current = getData(path);
+            if (current == null) return false;
+
+            byte[] newData = updater.apply(current);
+            if (setData(path, newData, current.getVersion())) return true;
+
+            if (attempt < maxRetries) {
+                log.debug("Version conflict on {}, retry {}/{}", path, attempt + 1, maxRetries);
+                Thread.sleep(10L * (1 << Math.min(attempt, 5))); // exponential backoff
+            }
+        }
+        log.warn("optimisticUpdate failed after {} retries on {}", maxRetries, path);
+        return false;
+    }
+
     // ==================== 重连 ====================
 
     private void handleRedirect(String leaderId) {

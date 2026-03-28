@@ -209,11 +209,16 @@ public final class ServerBeanFactory {
 
         // ---- 8. 网络层 ----
         ctx.register(BeanDefinition.of("lockServerHandler", LockServerHandler.class,
-                () -> new LockServerHandler(
+                () -> {
+                    com.hutulock.spi.storage.ZNodeStorage storage = ctx.getBean(com.hutulock.spi.storage.ZNodeStorage.class);
+                    DefaultZNodeTree tree = storage instanceof DefaultZNodeTree ? (DefaultZNodeTree) storage : null;
+                    return new LockServerHandler(
                         ctx.getBean(DefaultLockManager.class),
                         ctx.getBean(SessionTracker.class),
                         ctx.getBean(RaftNode.class),
-                        ctx.getBean(ServerProperties.class))));
+                        tree,
+                        ctx.getBean(ServerProperties.class));
+                }));
 
         // ---- 9. Admin console ----
         // Note: AdminApiServer is registered externally by hutulock-admin module

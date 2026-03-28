@@ -78,6 +78,7 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
             case OK:
                 complete("LOCK:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
                 complete("RECHECK:" + (msg.argCount() > 1 ? msg.arg(1) : ""), msg);
+                complete("SET_DATA:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
                 break;
             case WAIT:
                 complete("LOCK:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
@@ -88,8 +89,18 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
             case RENEWED:
                 complete("RENEW:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
                 break;
+            case DATA:
+                complete("GET_DATA:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
+                break;
+            case VERSION_MISMATCH:
+                complete("SET_DATA:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
+                break;
             case ERROR:
                 completeExceptionally(msg);
+                // Also complete GET_DATA futures with error response (not exception)
+                pendingRequests.entrySet().stream()
+                    .filter(e -> e.getKey().startsWith("GET_DATA:"))
+                    .forEach(e -> e.getValue().complete(msg));
                 break;
             default:
                 log.warn("Unhandled message type: {}", msg.getType());

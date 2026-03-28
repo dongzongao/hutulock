@@ -19,10 +19,14 @@ import com.hutulock.model.exception.HutuLockException;
 import com.hutulock.model.protocol.CommandType;
 import com.hutulock.model.protocol.Message;
 import com.hutulock.model.session.Session;
+import com.hutulock.model.znode.ZNode;
+import com.hutulock.model.znode.ZNodePath;
+import com.hutulock.model.znode.ZNodeType;
 import com.hutulock.spi.session.SessionTracker;
 import com.hutulock.config.api.ServerProperties;
 import com.hutulock.model.util.Strings;
 import com.hutulock.server.impl.DefaultLockManager;
+import com.hutulock.server.impl.DefaultZNodeTree;
 import com.hutulock.server.raft.RaftNode;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
@@ -61,6 +65,7 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
     private final DefaultLockManager lockManager;
     private final SessionTracker     sessionTracker;
     private final RaftNode           raftNode;
+    private final DefaultZNodeTree   zNodeTree;
     private final int                proposeRetry;
     private final long               proposeRetryDelayMs;
 
@@ -68,9 +73,18 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
                               SessionTracker sessionTracker,
                               RaftNode raftNode,
                               ServerProperties props) {
+        this(lockManager, sessionTracker, raftNode, null, props);
+    }
+
+    public LockServerHandler(DefaultLockManager lockManager,
+                              SessionTracker sessionTracker,
+                              RaftNode raftNode,
+                              DefaultZNodeTree zNodeTree,
+                              ServerProperties props) {
         this.lockManager         = lockManager;
         this.sessionTracker      = sessionTracker;
         this.raftNode            = raftNode;
+        this.zNodeTree           = zNodeTree;
         this.proposeRetry        = props.proposeRetryCount;
         this.proposeRetryDelayMs = props.proposeRetryDelayMs;
     }
@@ -86,11 +100,13 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
         }
 
         switch (msg.getType()) {
-            case CONNECT: handleConnect(ctx, msg); break;
-            case LOCK:    handleWrite(ctx, msg);   break;
-            case UNLOCK:  handleWrite(ctx, msg);   break;
-            case RECHECK: handleRecheck(ctx, msg); break;
-            case RENEW:   handleRenew(ctx, msg);   break;
+            case CONNECT:   handleConnect(ctx, msg);  break;
+            case LOCK:      handleWrite(ctx, msg);    break;
+            case UNLOCK:    handleWrite(ctx, msg);    break;
+            case RECHECK:   handleRecheck(ctx, msg);  break;
+            case RENEW:     handleRenew(ctx, msg);    break;
+            case GET_DATA:  handleGetData(ctx, msg);  break;
+            case SET_DATA:  handleSetData(ctx, msg);  break;
             default:
                 ctx.writeAndFlush(
                     Message.of(CommandType.ERROR, "unsupported: " + msg.getType()).serialize() + "\n");
@@ -186,6 +202,65 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
                 ctx.writeAndFlush(Message.of(CommandType.ERROR, errMsg).serialize() + "\n");
             }
         });
+    }
+
+    // ==================== Optimistic locking (GET_DATA / SET_DATA) ====================
+
+    /**
+     * GET_DATA <path> <sessionId>
+     * Response: DATA <path> <version> <base64-data>
+     */
+    private void handleGetData(ChannelHandlerContext ctx, Message msg) {
+        String path = msg.arg(0);
+        try {
+            ZNodePath zpath = ZNodePath.of(path);
+            ZNode node = zNodeTree != null ? zNodeTree.get(zpath) : null;
+            if (node == null) {
+                ctx.writeAndFlush(Message.of(CommandType.ERROR, "node not found: " + path).serialize() + "\n");
+                return;
+            }
+            byte[] data = node.getData() != null ? node.getData() : new byte[0];
+            String encoded = java.util.Base64.getEncoder().encodeToString(data);
+            ctx.writeAndFlush(
+                Message.of(CommandType.DATA, path, String.valueOf(node.getVersion()), encoded)
+                       .serialize() + "\n");
+        } catch (Exception e) {
+            ctx.writeAndFlush(Message.of(CommandType.ERROR, e.getMessage()).serialize() + "\n");
+        }
+    }
+
+    /**
+     * SET_DATA <path> <expectedVersion> <base64-data> <sessionId>
+     * Response: OK (success) or VERSION_MISMATCH (conflict, caller should retry)
+     */
+    private void handleSetData(ChannelHandlerContext ctx, Message msg) {
+        if (!raftNode.isLeader()) {
+            String leader = raftNode.getLeaderId();
+            ctx.writeAndFlush(
+                Message.of(CommandType.REDIRECT, leader != null ? leader : Strings.UNKNOWN_LEADER)
+                       .serialize() + "\n");
+            return;
+        }
+        String path            = msg.arg(0);
+        int    expectedVersion = Integer.parseInt(msg.arg(1));
+        byte[] data            = java.util.Base64.getDecoder().decode(msg.arg(2));
+
+        try {
+            ZNodePath zpath = ZNodePath.of(path);
+            if (zNodeTree == null) {
+                ctx.writeAndFlush(Message.of(CommandType.ERROR, "storage unavailable").serialize() + "\n");
+                return;
+            }
+            // setData with version check — throws VERSION_MISMATCH if stale
+            zNodeTree.setData(zpath, data, expectedVersion);
+            ctx.writeAndFlush(Message.of(CommandType.OK, path).serialize() + "\n");
+        } catch (com.hutulock.model.exception.HutuLockException e) {
+            if (e.getCode() == com.hutulock.model.exception.ErrorCode.VERSION_MISMATCH) {
+                ctx.writeAndFlush(Message.of(CommandType.VERSION_MISMATCH, path).serialize() + "\n");
+            } else {
+                ctx.writeAndFlush(Message.of(CommandType.ERROR, e.getMessage()).serialize() + "\n");
+            }
+        }
     }
 
     // ==================== 连接断开 ====================
