@@ -31,7 +31,7 @@
         <repository>
             <id>github</id>
             <name>GitHub HutuLock Apache Maven Packages</name>
-            <url>https://maven.pkg.github.com/hutulock/hutulock</url>
+            <url>https://maven.pkg.github.com/dongzongao/hutulock</url>
         </repository>
     </distributionManagement>
 
