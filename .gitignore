@@ -32,3 +32,4 @@ qodana.sarif.json
 qodana.yaml
 .qodana/
 data/
+hutulock-admin/ui/node_modules/
