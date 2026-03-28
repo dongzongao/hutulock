@@ -215,20 +215,8 @@ public final class ServerBeanFactory {
                         ctx.getBean(RaftNode.class),
                         ctx.getBean(ServerProperties.class))));
 
-        // ---- 9. Admin 控制台 ----
-        ctx.register(BeanDefinition.of("adminHttpServer",
-                com.hutulock.admin.AdminApiServer.class, () -> {
-            ServerProperties props = ctx.getBean(ServerProperties.class);
-            if (!props.adminEnabled) return null;
-            ZNodeStorage storage = ctx.getBean(ZNodeStorage.class);
-            DefaultZNodeTree tree = (storage instanceof DefaultZNodeTree)
-                ? (DefaultZNodeTree) storage : null;
-            DefaultSessionManager sessionMgr = ctx.getBean(DefaultSessionManager.class);
-            return new com.hutulock.admin.AdminApiServer(
-                props.adminPort, nodeId,
-                ctx.getBean(RaftNode.class),
-                sessionMgr,
-                tree);
-        }));
+        // ---- 9. Admin console ----
+        // Note: AdminApiServer is registered externally by hutulock-admin module
+        // to avoid a circular dependency (hutulock-admin depends on hutulock-server).
     }
 }
