@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-java:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,7 +29,82 @@ jobs:
     - name: Build all modules
       run: mvn -B install --file pom.xml -DskipTests
 
-    - name: Publish hutulock-server fat jar only
+    - name: Publish hutulock-server fat jar
       run: mvn -B deploy -s $GITHUB_WORKSPACE/settings.xml -pl hutulock-server -DskipTests
       env:
         GITHUB_TOKEN: ${{ github.token }}
+
+    - name: Upload server jar artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hutulock-server
+        path: hutulock-server/target/hutulock-server-*.jar
+        if-no-files-found: error
+
+  build-python-sdk:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: main
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Build Python wheel
+      run: |
+        pip install build
+        python -m build
+      working-directory: sdk/python
+
+    - name: Upload Python SDK artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hutulock-python-sdk
+        path: sdk/python/dist/*
+        if-no-files-found: error
+
+  build-go-sdk:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: main
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+
+    - name: Build and test Go SDK
+      run: go build ./...
+      working-directory: sdk/go
+
+    - name: Package Go SDK source
+      run: zip -r hutulock-go-sdk.zip sdk/go/
+
+    - name: Upload Go SDK artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hutulock-go-sdk
+        path: hutulock-go-sdk.zip
+        if-no-files-found: error
+
+  build-php-sdk:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: main
+
+    - name: Package PHP SDK source
+      run: zip -r hutulock-php-sdk.zip sdk/php/
+
+    - name: Upload PHP SDK artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hutulock-php-sdk
+        path: hutulock-php-sdk.zip
+        if-no-files-found: error
