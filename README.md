@@ -1,26 +1,34 @@
-# HutuLock
+<div align="center">
+
+# 🔒 HutuLock
+
+**High-availability distributed lock service built on Raft consensus**
+
+*Drop-in replacement for MySQL optimistic locking and Redis distributed locks*
 
 [![Build](https://github.com/dongzongao/hutulock/actions/workflows/maven-publish.yml/badge.svg)](https://github.com/dongzongao/hutulock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-11%2B-orange.svg)](https://openjdk.org)
-[![Maven](https://img.shields.io/badge/Maven-1.0.1--SNAPSHOT-green.svg)](https://github.com/dongzongao/hutulock/packages)
+[![Version](https://img.shields.io/badge/version-1.0.1--SNAPSHOT-green.svg)](https://github.com/dongzongao/hutulock/packages)
 
-**Distributed lock service built on Raft consensus.** Drop-in replacement for MySQL optimistic locking and Redis distributed locks — with high availability, automatic failover, and multi-language SDKs.
+</div>
 
-> Replace `SELECT ... WHERE version = ?` / `UPDATE ... WHERE version = ?` with a single API call.
+---
 
-## Why HutuLock
+## ✨ Why HutuLock
 
-| | MySQL optimistic lock | Redis SETNX | HutuLock |
-|---|---|---|---|
-| HA / auto-failover | ❌ | ❌ | ✅ Raft 3/5 nodes |
+| Feature | MySQL optimistic lock | Redis SETNX | **HutuLock** |
+|:--------|:---------------------:|:-----------:|:------------:|
+| High availability | ❌ | ❌ | ✅ Raft 3/5 nodes |
 | No single point of failure | ❌ | ❌ | ✅ |
 | Optimistic locking | ✅ | ❌ | ✅ |
 | Distributed lock | ❌ | ✅ | ✅ |
 | Watchdog / auto-renew | ❌ | manual | ✅ |
-| Multi-language SDK | ❌ | ✅ | ✅ Java · Python · Go · PHP |
+| Multi-language SDK | ❌ | ✅ | ✅ |
 
-## Quick Start
+---
+
+## 🚀 Quick Start
 
 ```bash
 # Single node
@@ -30,21 +38,29 @@ java -jar hutulock-server.jar node1 8881 9881
 ./bin/cluster.sh
 ```
 
-## Usage
+---
+
+## 📖 Usage
 
 **Distributed lock**
+
 ```java
 HutuLockClient client = HutuLockClient.builder()
     .addNode("127.0.0.1", 8881).build();
 client.connect();
 
 client.lock("order-lock");
-try { /* critical section */ } finally { client.unlock("order-lock"); }
+try {
+    // critical section
+} finally {
+    client.unlock("order-lock");
+}
 ```
 
 **Optimistic lock — replaces MySQL `version` field**
+
 ```java
-// Read data + version (replaces: SELECT data, version FROM t WHERE id = ?)
+// Read (replaces: SELECT data, version FROM t WHERE id = ?)
 VersionedData vd = client.getData("/resources/order-123");
 
 // Write with version check, auto-retry on conflict
@@ -56,7 +72,9 @@ boolean ok = client.optimisticUpdate("/resources/order-123", 3, current -> {
 });
 ```
 
-## Architecture
+---
+
+## 🏗 Architecture
 
 ```
 Client SDK  ──TCP──►  LockServerHandler
@@ -68,16 +86,20 @@ Client SDK  ──TCP──►  LockServerHandler
                       + WAL + Snapshots
 ```
 
-## SDKs
+---
 
-| Language | |
-|----------|-|
-| Java | `com.hutulock:hutulock-client:1.0.1-SNAPSHOT` |
-| Python | `pip install hutulock` |
-| Go | `go get github.com/hutulock/hutulock-go` |
-| PHP | `composer require hutulock/hutulock-php` |
+## 🌐 Multi-language SDKs
 
-## Admin Console
+| Language | Dependency |
+|:---------|:-----------|
+| ☕ Java | `com.hutulock:hutulock-client:1.0.1-SNAPSHOT` |
+| 🐍 Python | `pip install hutulock` |
+| 🐹 Go | `go get github.com/hutulock/hutulock-go` |
+| 🐘 PHP | `composer require hutulock/hutulock-php` |
+
+---
+
+## 🖥 Admin Console
 
 ```
 http://localhost:9091   (admin / admin123)
@@ -85,6 +107,8 @@ http://localhost:9091   (admin / admin123)
 
 Prometheus metrics: `http://localhost:9090/metrics`
 
-## License
+---
 
-Apache 2.0
+## 📄 License
+
+[Apache License 2.0](LICENSE) © 2026 HutuLock Authors
