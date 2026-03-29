@@ -83,7 +83,7 @@ public class DefaultWatcherRegistry implements WatcherRegistry {
     @Override
     public void fire(ZNodePath path, WatchEvent.Type eventType) {
         WatchEvent event   = new WatchEvent(eventType, path);
-        String     payload = event.serialize() + "\n";
+        String     payload = event.serializeWithNewline();  // 预计算，无额外分配
 
         // One-shot watcher：remove 后推送，确保不重复触发
         Set<Channel> oneShot = watchers.remove(path.value());

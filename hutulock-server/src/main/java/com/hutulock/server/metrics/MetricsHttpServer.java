@@ -55,6 +55,8 @@ public class MetricsHttpServer implements Lifecycle {
     private final PrometheusMetricsCollector collector;
     /** 允许访问 /metrics 的 IP 白名单，空表示仅允许 localhost */
     private final java.util.Set<String>     allowedHosts;
+    /** 预计算的 health 响应体，nodeId 固定，无需每次拼接 */
+    private final byte[]                    healthBody;
     private HttpServer                      server;
 
     /**
@@ -77,6 +79,9 @@ public class MetricsHttpServer implements Lifecycle {
         this.allowedHosts = allowedHosts != null && !allowedHosts.isEmpty()
             ? allowedHosts
             : java.util.Set.of("127.0.0.1", "0:0:0:0:0:0:0:1", "::1");
+        // 预计算 health 响应体，nodeId 固定，避免每次请求拼接
+        this.healthBody = ("{\"status\":\"UP\",\"node\":\"" + nodeId + "\"}")
+            .getBytes(StandardCharsets.UTF_8);
     }
 
     /**
@@ -108,14 +113,12 @@ public class MetricsHttpServer implements Lifecycle {
             }
         });
 
-        // GET /health — 健康检查
+        // GET /health — 健康检查（使用预计算响应体，无运行时分配）
         server.createContext("/health", exchange -> {
-            String json = "{\"status\":\"UP\",\"node\":\"" + nodeId + "\"}";
-            byte[] body = json.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, body.length);
+            exchange.sendResponseHeaders(200, healthBody.length);
             try (OutputStream os = exchange.getResponseBody()) {
-                os.write(body);
+                os.write(healthBody);
             }
         });
 

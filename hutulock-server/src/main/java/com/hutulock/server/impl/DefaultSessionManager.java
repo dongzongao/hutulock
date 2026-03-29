@@ -218,7 +218,7 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
 
         if (ch != null && ch.isActive()) {
             WatchEvent event = new WatchEvent(WatchEvent.Type.SESSION_EXPIRED, ZNodePath.ROOT);
-            ch.writeAndFlush(event.serialize() + "\n");
+            ch.writeAndFlush(event.serializeWithNewline());
         }
     }
 }

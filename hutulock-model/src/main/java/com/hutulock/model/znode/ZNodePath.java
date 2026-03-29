@@ -36,7 +36,11 @@ public final class ZNodePath {
 
     public static ZNodePath of(String path) {
         validate(path);
-        return new ZNodePath(path.replaceAll("/+", "/"));
+        // 避免 replaceAll 每次编译正则：先检查是否含连续斜杠，再处理
+        String normalized = path.indexOf("//") >= 0
+            ? path.replaceAll("/+", "/")
+            : path;
+        return new ZNodePath(normalized);
     }
 
     public static ZNodePath of(ZNodePath parent, String child) {

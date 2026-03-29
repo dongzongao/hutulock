@@ -41,24 +41,50 @@ public final class WatchEvent {
     private final Type      type;
     private final ZNodePath path;
     private final long      timestamp;
+    /** 预计算的序列化字符串，避免热路径上重复拼接 */
+    private final String    serialized;
+    /** 预计算的带换行序列化字符串，供 Netty writeAndFlush 直接使用 */
+    private final String    serializedWithNewline;
 
     public WatchEvent(Type type, ZNodePath path) {
-        this.type      = type;
-        this.path      = path;
-        this.timestamp = System.currentTimeMillis();
+        this.type       = type;
+        this.path       = path;
+        this.timestamp  = System.currentTimeMillis();
+        // 预计算：serialize() 在 Watcher 触发时被高频调用，结果固定
+        this.serialized            = "WATCH_EVENT " + type.name() + " " + path.value();
+        this.serializedWithNewline = this.serialized + "\n";
     }
 
     public Type      getType()      { return type;      }
     public ZNodePath getPath()      { return path;      }
     public long      getTimestamp() { return timestamp; }
 
+    /** 返回预计算的序列化字符串，O(1)，无分配。 */
     public String serialize() {
-        return "WATCH_EVENT " + type.name() + " " + path.value();
+        return serialized;
     }
 
+    /**
+     * 返回带换行符的序列化字符串（用于 Netty writeAndFlush），O(1)，无分配。
+     * 避免调用方每次 serialize() + "\n" 产生额外字符串对象。
+     */
+    public String serializeWithNewline() {
+        return serializedWithNewline;
+    }
+
+    /**
+     * 解析 WatchEvent，使用手动 indexOf 替代 split 正则，避免每次调用编译正则。
+     */
     public static WatchEvent parse(String line) {
-        String[] parts = line.trim().split("\\s+", 3);
-        return new WatchEvent(Type.valueOf(parts[1]), ZNodePath.of(parts[2]));
+        // 格式：WATCH_EVENT {type} {path}
+        int i1 = line.indexOf(' ');          // "WATCH_EVENT" 后
+        int i2 = i1 > 0 ? line.indexOf(' ', i1 + 1) : -1;  // type 后
+        if (i1 < 0 || i2 < 0) {
+            throw new IllegalArgumentException("Malformed WatchEvent: " + line);
+        }
+        Type      type = Type.valueOf(line.substring(i1 + 1, i2));
+        ZNodePath path = ZNodePath.of(line.substring(i2 + 1).trim());
+        return new WatchEvent(type, path);
     }
 
     @Override
