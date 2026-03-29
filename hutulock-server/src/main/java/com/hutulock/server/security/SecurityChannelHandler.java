@@ -172,8 +172,7 @@ public class SecurityChannelHandler extends SimpleChannelInboundHandler<String> 
     // ==================== 授权检查 ====================
 
     private boolean checkAuthorization(ChannelHandlerContext ctx, Message msg, String clientId) {
-        if (msg.argCount() < 1) return true; // 参数不足，交给业务 Handler 处理
-
+        // Schema 已保证 LOCK/UNLOCK 至少有 2 个参数，直接取 arg(0)
         String lockName = msg.arg(0);
         Permission perm = msg.getType() == CommandType.LOCK ? Permission.LOCK : Permission.UNLOCK;
 

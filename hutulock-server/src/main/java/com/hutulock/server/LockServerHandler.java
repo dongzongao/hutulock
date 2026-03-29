@@ -116,9 +116,10 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
     // ==================== 会话建立 ====================
 
     private void handleConnect(ChannelHandlerContext ctx, Message msg) {
-        String existingSessionId = msg.argCount() > 0 ? msg.arg(0) : null;
+        // CONNECT [sessionId] — optArg(0) 处理可选的 sessionId，无需 argCount 检查
+        String existingSessionId = msg.optArg(0).filter(s -> !s.isEmpty()).orElse(null);
 
-        if (existingSessionId != null && !existingSessionId.isEmpty()) {
+        if (existingSessionId != null) {
             // 尝试恢复会话
             boolean reconnected = sessionTracker.reconnect(existingSessionId, ctx.channel());
             if (reconnected) {

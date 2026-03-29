@@ -76,24 +76,25 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
             case REDIRECT:  handleRedirect(msg);  break;
             case CONNECTED: complete("CONNECT", msg); break;
             case OK:
-                complete("LOCK:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
-                complete("RECHECK:" + (msg.argCount() > 1 ? msg.arg(1) : ""), msg);
-                complete("SET_DATA:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
+                // Schema 保证 OK 有 1-2 个参数，直接用 arg(0) / optArg(1)
+                complete("LOCK:" + msg.arg(0), msg);
+                complete("RECHECK:" + msg.optArg(1).orElse(""), msg);
+                complete("SET_DATA:" + msg.arg(0), msg);
                 break;
             case WAIT:
-                complete("LOCK:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
+                complete("LOCK:" + msg.arg(0), msg);
                 break;
             case RELEASED:
-                complete("UNLOCK:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
+                complete("UNLOCK:" + msg.arg(0), msg);
                 break;
             case RENEWED:
-                complete("RENEW:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
+                complete("RENEW:" + msg.arg(0), msg);
                 break;
             case DATA:
-                complete("GET_DATA:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
+                complete("GET_DATA:" + msg.arg(0), msg);
                 break;
             case VERSION_MISMATCH:
-                complete("SET_DATA:" + (msg.argCount() > 0 ? msg.arg(0) : ""), msg);
+                complete("SET_DATA:" + msg.arg(0), msg);
                 break;
             case ERROR:
                 completeExceptionally(msg);
@@ -121,7 +122,7 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
     }
 
     private void handleRedirect(Message msg) {
-        String leaderId = msg.argCount() > 0 ? msg.arg(0) : "UNKNOWN";
+        String leaderId = msg.arg(0);  // Schema 保证 REDIRECT 有 1 个参数
         log.info("Redirected to leader: {}", leaderId);
         pendingRequests.forEach((k, f) ->
             f.complete(Message.of(CommandType.REDIRECT, leaderId)));
@@ -152,7 +153,7 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
     }
 
     private void completeExceptionally(Message msg) {
-        String errMsg = msg.argCount() > 0 ? msg.arg(0) : "unknown error";
+        String errMsg = msg.optArg(0).orElse("unknown error");
         pendingRequests.forEach((k, f) -> f.completeExceptionally(new RuntimeException(errMsg)));
         pendingRequests.clear();
     }

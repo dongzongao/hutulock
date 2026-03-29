@@ -151,7 +151,8 @@ public final class LockContext {
         private final String lockName;
         private final String sessionId;
         private long   ttlMs              = 30_000;
-        private long   watchdogIntervalMs = 9_000;
+        /** -1 表示自动推导为 ttl/4，消除与 ttl 的同步隐患 */
+        private long   watchdogIntervalMs = -1;
         private Consumer<String> onExpiredCallback;
         private ScheduledExecutorService scheduler;
 
@@ -165,7 +166,7 @@ public final class LockContext {
             this.ttlMs = unit.toMillis(duration); return this;
         }
 
-        /** 看门狗心跳间隔，建议 &lt; TTL/3。 */
+        /** 看门狗心跳间隔，建议 &lt; TTL/3。不设置则自动取 TTL/4。 */
         public Builder watchdogInterval(long duration, TimeUnit unit) {
             this.watchdogIntervalMs = unit.toMillis(duration); return this;
         }
@@ -181,16 +182,21 @@ public final class LockContext {
         }
 
         public LockContext build() {
+            long effectiveInterval = watchdogIntervalMs < 0
+                ? ttlMs / 4
+                : watchdogIntervalMs;
+            if (effectiveInterval >= ttlMs / 3) {
+                throw new IllegalArgumentException(
+                    "watchdogInterval (" + effectiveInterval + "ms) must be < ttl/3 ("
+                    + ttlMs / 3 + "ms) to ensure renewal before expiry");
+            }
+            this.watchdogIntervalMs = effectiveInterval;
             if (scheduler == null) {
                 scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                     Thread t = new Thread(r, "hutulock-watchdog-" + lockName);
                     t.setDaemon(true);
                     return t;
                 });
-            }
-            if (watchdogIntervalMs >= ttlMs / 3) {
-                throw new IllegalArgumentException(
-                    "watchdogInterval must be < ttl/3 to ensure renewal before expiry");
             }
             return new LockContext(this);
         }

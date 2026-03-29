@@ -322,9 +322,9 @@ public class HutuLockClient implements AutoCloseable {
 
         // Response: DATA <path> <version> <base64-data>
         int version = Integer.parseInt(resp.arg(1));
-        byte[] data = resp.argCount() > 2
-            ? java.util.Base64.getDecoder().decode(resp.arg(2))
-            : new byte[0];
+        byte[] data = resp.optArg(2)
+            .map(s -> java.util.Base64.getDecoder().decode(s))
+            .orElse(new byte[0]);
         return new VersionedData(path, data, version);
     }
 

@@ -56,7 +56,12 @@ public final class ClientProperties {
         private int     connectTimeoutMs   = 3_000;
         private int     lockTimeoutS       = 30;
         private long    watchdogTtlMs      = 30_000;
-        private long    watchdogIntervalMs = 9_000;
+        /**
+         * 看门狗心跳间隔，默认 -1 表示"自动推导为 ttl/4"。
+         * 显式设置时必须满足 < ttl/3。
+         * 自动推导消除了"两处默认值必须同步"的隐患。
+         */
+        private long    watchdogIntervalMs = -1;
         private int     maxFrameLength     = 1024;
         private boolean metricsEnabled     = true;
 
@@ -68,10 +73,17 @@ public final class ClientProperties {
         public Builder metricsEnabled(boolean b) { metricsEnabled     = b;   return this; }
 
         public ClientProperties build() {
-            if (watchdogIntervalMs >= watchdogTtlMs / 3) {
+            // 自动推导：未显式设置时取 ttl/4，始终满足 < ttl/3
+            long effectiveInterval = watchdogIntervalMs < 0
+                ? watchdogTtlMs / 4
+                : watchdogIntervalMs;
+            if (effectiveInterval >= watchdogTtlMs / 3) {
                 throw new IllegalArgumentException(
-                    "watchdogInterval should be < watchdogTtl/3 to ensure renewal before expiry");
+                    "watchdogInterval (" + effectiveInterval + "ms) must be < watchdogTtl/3 ("
+                    + watchdogTtlMs / 3 + "ms) to ensure renewal before expiry");
             }
+            // 用推导后的值重新赋值，保证 ClientProperties 字段一致
+            this.watchdogIntervalMs = effectiveInterval;
             return new ClientProperties(this);
         }
     }
