@@ -94,8 +94,8 @@ public final class ZNode {
 
     @Override
     public String toString() {
-        return String.format("ZNode{path=%s, type=%s, session=%s, seq=%d, ver=%d}",
-            path, type, sessionId, sequenceNum, version);
+        return "ZNode{path=" + path + ", type=" + type + ", session=" + sessionId
+            + ", seq=" + sequenceNum + ", ver=" + version + '}';
     }
 
     public static Builder builder(ZNodePath path, ZNodeType type) { return new Builder(path, type); }

@@ -329,14 +329,18 @@ public class AdminHttpServer implements Lifecycle {
             body = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
         }
         Map<String, String> result = new LinkedHashMap<>();
-        java.util.regex.Matcher m = java.util.regex.Pattern
-            .compile("\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"").matcher(body);
+        java.util.regex.Matcher m = JSON_STRING_FIELD.matcher(body);
         while (m.find()) result.put(m.group(1), m.group(2));
-        java.util.regex.Matcher m2 = java.util.regex.Pattern
-            .compile("\"([^\"]+)\"\\s*:\\s*(\\d+)").matcher(body);
+        java.util.regex.Matcher m2 = JSON_NUMBER_FIELD.matcher(body);
         while (m2.find()) result.putIfAbsent(m2.group(1), m2.group(2));
         return result;
     }
+
+    // 预编译正则，避免每次 parseJsonBody 调用都重新编译（Pattern.compile 有反射开销）
+    private static final java.util.regex.Pattern JSON_STRING_FIELD =
+        java.util.regex.Pattern.compile("\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"");
+    private static final java.util.regex.Pattern JSON_NUMBER_FIELD =
+        java.util.regex.Pattern.compile("\"([^\"]+)\"\\s*:\\s*(\\d+)");
 
     private static String esc(String s) {
         if (s == null) return "";

@@ -396,6 +396,12 @@ public class AdminApiServer implements Lifecycle {
         try (OutputStream os = ex.getResponseBody()) { os.write(body); }
     }
 
+    // 预编译正则，避免每次 parseJsonBody 调用都重新编译
+    private static final java.util.regex.Pattern JSON_STRING_FIELD =
+        java.util.regex.Pattern.compile("\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"");
+    private static final java.util.regex.Pattern JSON_NUMBER_FIELD =
+        java.util.regex.Pattern.compile("\"([^\"]+)\"\\s*:\\s*(\\d+)");
+
     /** 解析简单 JSON body（仅支持顶层 string 字段，无需引入 JSON 库）。 */
     private Map<String, String> parseJsonBody(HttpExchange ex) throws IOException {
         String body;
@@ -403,15 +409,9 @@ public class AdminApiServer implements Lifecycle {
             body = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
         }
         Map<String, String> result = new LinkedHashMap<>();
-        // 简单解析：匹配 "key":"value" 或 "key":number
-        java.util.regex.Matcher m = java.util.regex.Pattern
-            .compile("\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"")
-            .matcher(body);
+        java.util.regex.Matcher m = JSON_STRING_FIELD.matcher(body);
         while (m.find()) result.put(m.group(1), m.group(2));
-        // 数字字段
-        java.util.regex.Matcher m2 = java.util.regex.Pattern
-            .compile("\"([^\"]+)\"\\s*:\\s*(\\d+)")
-            .matcher(body);
+        java.util.regex.Matcher m2 = JSON_NUMBER_FIELD.matcher(body);
         while (m2.find()) result.putIfAbsent(m2.group(1), m2.group(2));
         return result;
     }

@@ -81,6 +81,6 @@ public final class Session {
 
     @Override
     public String toString() {
-        return String.format("Session{id=%s, client=%s, state=%s}", sessionId, clientId, state);
+        return "Session{id=" + sessionId + ", client=" + clientId + ", state=" + state + '}';
     }
 }
