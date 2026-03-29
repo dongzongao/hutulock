@@ -25,6 +25,7 @@ import com.hutulock.model.znode.ZNodeType;
 import com.hutulock.spi.session.SessionTracker;
 import com.hutulock.config.api.ServerProperties;
 import com.hutulock.model.util.Strings;
+import com.hutulock.server.handler.CommandRegistry;
 import com.hutulock.server.impl.DefaultLockManager;
 import com.hutulock.server.impl.DefaultZNodeTree;
 import com.hutulock.server.raft.RaftNode;
@@ -68,6 +69,8 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
     private final DefaultZNodeTree   zNodeTree;
     private final int                proposeRetry;
     private final long               proposeRetryDelayMs;
+    /** 命令路由表，替代 switch(msg.getType()) */
+    private final CommandRegistry    commandRegistry;
 
     public LockServerHandler(DefaultLockManager lockManager,
                               SessionTracker sessionTracker,
@@ -87,6 +90,18 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
         this.zNodeTree           = zNodeTree;
         this.proposeRetry        = props.proposeRetryCount;
         this.proposeRetryDelayMs = props.proposeRetryDelayMs;
+
+        // 命令模式：注册每个 CommandType 对应的处理器，替代 switch
+        this.commandRegistry = new CommandRegistry(
+                (ctx, msg) -> ctx.writeAndFlush(
+                    Message.of(CommandType.ERROR, "unsupported: " + msg.getType()).serialize() + "\n"))
+            .register(CommandType.CONNECT,  this::handleConnect)
+            .register(CommandType.LOCK,     this::handleWrite)
+            .register(CommandType.UNLOCK,   this::handleWrite)
+            .register(CommandType.RECHECK,  this::handleRecheck)
+            .register(CommandType.RENEW,    this::handleRenew)
+            .register(CommandType.GET_DATA, this::handleGetData)
+            .register(CommandType.SET_DATA, this::handleSetData);
     }
 
     @Override
@@ -99,18 +114,8 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
             return;
         }
 
-        switch (msg.getType()) {
-            case CONNECT:   handleConnect(ctx, msg);  break;
-            case LOCK:      handleWrite(ctx, msg);    break;
-            case UNLOCK:    handleWrite(ctx, msg);    break;
-            case RECHECK:   handleRecheck(ctx, msg);  break;
-            case RENEW:     handleRenew(ctx, msg);    break;
-            case GET_DATA:  handleGetData(ctx, msg);  break;
-            case SET_DATA:  handleSetData(ctx, msg);  break;
-            default:
-                ctx.writeAndFlush(
-                    Message.of(CommandType.ERROR, "unsupported: " + msg.getType()).serialize() + "\n");
-        }
+        // 命令模式：O(1) 路由，替代 switch(msg.getType())
+        commandRegistry.dispatch(ctx, msg);
     }
 
     // ==================== 会话建立 ====================

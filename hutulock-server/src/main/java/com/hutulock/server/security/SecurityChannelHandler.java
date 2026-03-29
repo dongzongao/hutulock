@@ -17,9 +17,6 @@ package com.hutulock.server.security;
 
 import com.hutulock.model.protocol.CommandType;
 import com.hutulock.model.protocol.Message;
-import com.hutulock.spi.security.AuthResult;
-import com.hutulock.spi.security.AuthToken;
-import com.hutulock.spi.security.Authorizer.Permission;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
@@ -30,29 +27,16 @@ import org.slf4j.LoggerFactory;
 /**
  * Netty 安全拦截器
  *
- * <p>在 Netty Pipeline 中位于 {@link com.hutulock.server.LockServerHandler} 之前，
- * 负责：
+ * <p>职责已拆分到责任链的三个过滤器：
  * <ol>
- *   <li>认证（Authentication）— 解析 CONNECT 命令中的 AuthToken，验证身份</li>
- *   <li>限流（Rate Limiting）— 按 clientId 限制请求频率</li>
- *   <li>授权（Authorization）— 在 LOCK/UNLOCK 命令前检查 ACL 权限</li>
- *   <li>审计（Audit）— 记录所有安全相关事件</li>
+ *   <li>{@link RateLimitFilter} — 限流</li>
+ *   <li>{@link AuthFilter}      — 认证</li>
+ *   <li>{@link AuthzFilter}     — 授权</li>
  * </ol>
  *
- * <p>Pipeline 顺序：
- * <pre>
- *   LineBasedFrameDecoder
- *   StringDecoder / StringEncoder
- *   SecurityChannelHandler   ← 安全拦截（本类）
- *   LockServerHandler        ← 业务逻辑
- * </pre>
- *
- * <p>认证流程：
- * <ul>
- *   <li>未认证的连接只允许发送 CONNECT 命令</li>
- *   <li>CONNECT 认证成功后，将 clientId 写入 Channel 属性</li>
- *   <li>认证失败立即关闭连接</li>
- * </ul>
+ * <p>本类只负责：解析消息 + 驱动责任链 + 透传通过的请求。
+ * 新增安全检查只需实现 {@link SecurityFilter} 并在构造函数中 {@code .add()}，
+ * 无需修改本类（开闭原则）。
  *
  * @author HutuLock Authors
  * @since 1.0.0
@@ -62,23 +46,26 @@ public class SecurityChannelHandler extends SimpleChannelInboundHandler<String> 
 
     private static final Logger log = LoggerFactory.getLogger(SecurityChannelHandler.class);
 
-    /** Channel 属性 Key：认证后的 clientId */
+    /** Channel 属性 Key：认证后的 clientId（供过滤器和业务 Handler 共享） */
     public static final AttributeKey<String> CLIENT_ID_KEY =
         AttributeKey.valueOf("hutulock.security.clientId");
 
-    /** Channel 属性 Key：是否已通过认证 */
-    private static final AttributeKey<Boolean> AUTHENTICATED_KEY =
-        AttributeKey.valueOf("hutulock.security.authenticated");
-
-    private final SecurityContext security;
+    private final SecurityContext     security;
+    private final SecurityFilterChain filterChain;
 
     public SecurityChannelHandler(SecurityContext security) {
         this.security = security;
+        // 责任链：限流 → 认证 → 授权
+        // 新增安全检查只需在此处 .add() 一个新过滤器
+        this.filterChain = SecurityFilterChain.builder()
+            .add(new RateLimitFilter(security))
+            .add(new AuthFilter(security))
+            .add(new AuthzFilter(security))
+            .build();
     }
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, String raw) {
-        // 安全未启用，直接透传
         if (!security.isEnabled()) {
             ctx.fireChannelRead(raw);
             return;
@@ -88,130 +75,16 @@ public class SecurityChannelHandler extends SimpleChannelInboundHandler<String> 
         try {
             msg = Message.parse(raw);
         } catch (Exception e) {
-            // 解析失败，拒绝请求（不透传，防止绕过认证检查）
             log.warn("Failed to parse message from {}: {}", ctx.channel().remoteAddress(), e.getMessage());
-            ctx.writeAndFlush(
-                Message.of(CommandType.ERROR, "invalid message format").serialize() + "\n");
+            ctx.writeAndFlush(Message.of(CommandType.ERROR, "invalid message format").serialize() + "\n");
             ctx.close();
             return;
         }
 
-        // 1. 限流检查（在认证之前，防止未认证请求耗尽资源）
-        String clientId = ctx.channel().attr(CLIENT_ID_KEY).get();
-        String limitKey = clientId != null ? clientId : ctx.channel().remoteAddress().toString();
-        if (!security.getRateLimiter().tryAcquire(limitKey)) {
-            log.warn("Rate limit exceeded: client={}, addr={}",
-                limitKey, ctx.channel().remoteAddress());
-            ctx.writeAndFlush(
-                Message.of(CommandType.ERROR, "rate limit exceeded").serialize() + "\n");
-            return; // 丢弃请求，不关闭连接
+        // 责任链驱动：全部通过后透传给业务 Handler
+        if (filterChain.execute(ctx, msg, raw)) {
+            ctx.fireChannelRead(raw);
         }
-
-        // 2. 认证检查
-        Boolean authenticated = ctx.channel().attr(AUTHENTICATED_KEY).get();
-        if (!Boolean.TRUE.equals(authenticated)) {
-            if (msg.getType() != CommandType.CONNECT) {
-                // 未认证，只允许 CONNECT
-                log.warn("Unauthenticated request: type={}, addr={}",
-                    msg.getType(), ctx.channel().remoteAddress());
-                ctx.writeAndFlush(
-                    Message.of(CommandType.ERROR, "authentication required").serialize() + "\n");
-                ctx.close();
-                return;
-            }
-            // 处理 CONNECT 认证
-            handleConnect(ctx, msg, raw);
-            return;
-        }
-
-        // 3. 授权检查（LOCK / UNLOCK 命令）
-        if (msg.getType() == CommandType.LOCK || msg.getType() == CommandType.UNLOCK) {
-            if (!checkAuthorization(ctx, msg, clientId)) {
-                return; // 授权失败，已发送错误响应
-            }
-        }
-
-        // 4. 通过所有安全检查，透传给业务 Handler
-        ctx.fireChannelRead(raw);
-    }
-
-    // ==================== 认证处理 ====================
-
-    private void handleConnect(ChannelHandlerContext ctx, Message msg, String raw) {
-        String remoteAddr = ctx.channel().remoteAddress().toString();
-
-        // 解析 AuthToken：CONNECT [sessionId] [TOKEN:xxx 或 HMAC:ts:sig]
-        AuthToken token = extractAuthToken(msg);
-
-        AuthResult result = security.getAuthenticator().authenticate(token);
-        security.getAuditLogger().logAuth(
-            token != null ? token.getClientId() : "unknown",
-            remoteAddr,
-            result.isSuccess(),
-            result.getReason()
-        );
-
-        if (!result.isSuccess()) {
-            log.warn("Authentication failed: addr={}, reason={}", remoteAddr, result.getReason());
-            ctx.writeAndFlush(
-                Message.of(CommandType.ERROR, "auth failed: " + result.getReason()).serialize() + "\n");
-            ctx.close();
-            return;
-        }
-
-        // 认证成功，记录 clientId 到 Channel 属性
-        String authenticatedClientId = result.getClientId();
-        ctx.channel().attr(CLIENT_ID_KEY).set(authenticatedClientId);
-        ctx.channel().attr(AUTHENTICATED_KEY).set(Boolean.TRUE);
-        log.info("Client authenticated: clientId={}, addr={}", authenticatedClientId, remoteAddr);
-
-        // 透传 CONNECT 命令给业务 Handler（由业务 Handler 创建 Session）
-        ctx.fireChannelRead(raw);
-    }
-
-    // ==================== 授权检查 ====================
-
-    private boolean checkAuthorization(ChannelHandlerContext ctx, Message msg, String clientId) {
-        // Schema 已保证 LOCK/UNLOCK 至少有 2 个参数，直接取 arg(0)
-        String lockName = msg.arg(0);
-        Permission perm = msg.getType() == CommandType.LOCK ? Permission.LOCK : Permission.UNLOCK;
-
-        boolean permitted = security.getAuthorizer().isPermitted(clientId, lockName, perm);
-        security.getAuditLogger().logAuthz(clientId, lockName, perm, permitted);
-
-        if (!permitted) {
-            log.warn("Authorization denied: clientId={}, lock={}, perm={}", clientId, lockName, perm);
-            ctx.writeAndFlush(
-                Message.of(CommandType.ERROR,
-                    "permission denied: " + clientId + " cannot " + perm + " on " + lockName)
-                    .serialize() + "\n");
-        }
-        return permitted;
-    }
-
-    // ==================== 工具方法 ====================
-
-    /**
-     * 从 CONNECT 命令中提取 AuthToken。
-     *
-     * <p>CONNECT 命令格式：
-     * <pre>
-     *   CONNECT                              — 无认证（开发模式）
-     *   CONNECT TOKEN:my-secret              — Token 认证（无 sessionId）
-     *   CONNECT old-session-id TOKEN:secret  — Token 认证（带 sessionId）
-     *   CONNECT HMAC:1700000000:signature    — HMAC 认证
-     * </pre>
-     */
-    private static AuthToken extractAuthToken(Message msg) {
-        // 遍历参数，找到以 TOKEN: 或 HMAC: 开头的参数
-        for (int i = 0; i < msg.argCount(); i++) {
-            String arg = msg.arg(i);
-            if (arg.startsWith("TOKEN:") || arg.startsWith("HMAC:")) {
-                // clientId 暂时用 "unknown"，由 TokenAuthenticator 内部解析
-                return AuthToken.parse("unknown", arg);
-            }
-        }
-        return null; // 无 token，由 Authenticator 决定是否允许
     }
 
     @Override

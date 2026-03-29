@@ -32,6 +32,7 @@ import com.hutulock.server.metrics.PrometheusMetricsCollector;
 import com.hutulock.server.raft.RaftNode;
 import com.hutulock.server.security.*;
 import com.hutulock.proxy.support.ProxyBuilder;
+import com.hutulock.proxy.support.ProxyConfigurator;
 
 /**
  * 服务端 Bean 工厂
@@ -73,12 +74,6 @@ public final class ServerBeanFactory {
 
     private ServerBeanFactory() {}
 
-    /** 判断是否启用了指定代理类型（读取系统属性）。 */
-    private static boolean proxyEnabled(String type) {
-        String val = System.getProperty(PROXY_PROP, "").toLowerCase();
-        return val.contains(type) || val.contains("all");
-    }
-
     /**
      * 向容器注册所有服务端 Bean。
      *
@@ -88,6 +83,8 @@ public final class ServerBeanFactory {
      * @param config   配置提供者
      */
     public static void register(ApplicationContext ctx, String nodeId, int raftPort, ConfigProvider config) {
+        // 策略模式：一次性解析代理配置，替代多处 if(proxyEnabled("logging")) 判断
+        ProxyConfigurator proxy = ProxyConfigurator.fromSystemProperty();
 
         // ---- 1. 配置 ----
         ctx.register(BeanDefinition.of("serverProperties", ServerProperties.class,
@@ -100,8 +97,7 @@ public final class ServerBeanFactory {
         // ---- 2. 事件总线 ----
         ctx.register(BeanDefinition.of("eventBus", EventBus.class, () -> {
             DefaultEventBus bus = new DefaultEventBus();
-            if (!proxyEnabled("logging")) return bus;
-            return ProxyBuilder.wrap(EventBus.class, bus).withLogging().build();
+            return proxy.apply(EventBus.class, bus);
         }));
 
         // ---- 3. Metrics ----
@@ -134,11 +130,7 @@ public final class ServerBeanFactory {
                     ctx.getBean(EventBus.class),
                     ctx.getBean(com.hutulock.server.mem.MemoryManager.class));
             tree.setNodeId(nodeId);
-            ZNodeStorage storage = tree;  // 显式向上转型，帮助泛型推断
-            ProxyBuilder<ZNodeStorage> builder = ProxyBuilder.wrap(ZNodeStorage.class, storage);
-            if (proxyEnabled("logging")) builder.withLogging();
-            if (proxyEnabled("metrics")) builder.withMetrics();
-            return (proxyEnabled("logging") || proxyEnabled("metrics")) ? builder.build() : storage;
+            return proxy.apply(ZNodeStorage.class, tree);
         }));
 
         // ---- 5. 会话层 ----
@@ -155,8 +147,7 @@ public final class ServerBeanFactory {
         // 对外暴露代理版本（日志增强，可选）
         ctx.register(BeanDefinition.of("sessionTracker", SessionTracker.class, () -> {
             DefaultSessionManager mgr = ctx.getBean(DefaultSessionManager.class);
-            if (!proxyEnabled("logging")) return mgr;
-            return ProxyBuilder.wrap(SessionTracker.class, mgr).withLogging().build();
+            return proxy.apply(SessionTracker.class, mgr);
         }));
 
         // ---- 6. 锁管理（同时作为 Raft 状态机）----
