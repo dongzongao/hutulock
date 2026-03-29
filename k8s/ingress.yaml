@@ -1,0 +1,47 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hutulock-ingress
+  namespace: hutulock
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    # 如需 TLS，取消注释并配置 cert-manager
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  rules:
+    # Admin UI
+    - host: hutulock-admin.example.com   # 替换为你的域名
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: hutulock-admin
+                port:
+                  number: 80
+    # 客户端 TCP 连接（8881）通过 LoadBalancer Service 暴露，见下方
+  # tls:
+  #   - hosts:
+  #       - hutulock-admin.example.com
+  #     secretName: hutulock-tls
+
+---
+# 对外暴露客户端端口（TCP，Ingress 不支持 TCP，用 LoadBalancer）
+# 如果是本地测试，改 type: NodePort
+apiVersion: v1
+kind: Service
+metadata:
+  name: hutulock-client-lb
+  namespace: hutulock
+  labels:
+    app: hutulock-server
+spec:
+  type: LoadBalancer
+  selector:
+    app: hutulock-server
+  ports:
+    - name: client
+      port: 8881
+      targetPort: 8881

@@ -1,0 +1,145 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: hutulock
+  namespace: hutulock
+  labels:
+    app: hutulock-server
+spec:
+  serviceName: hutulock-raft   # 关联 Headless Service，提供稳定 DNS
+  replicas: 3
+  selector:
+    matchLabels:
+      app: hutulock-server
+  template:
+    metadata:
+      labels:
+        app: hutulock-server
+    spec:
+      # 反亲和性：确保三个节点分散到不同物理机
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: hutulock-server
+                topologyKey: kubernetes.io/hostname
+
+      terminationGracePeriodSeconds: 30
+
+      initContainers:
+        # 根据 Pod 序号（0/1/2）自动生成 NODE_ID 和 PEERS
+        - name: init-peers
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              # StatefulSet Pod 名称格式：hutulock-0, hutulock-1, hutulock-2
+              ORDINAL=${HOSTNAME##*-}
+              NODE_ID="node$((ORDINAL + 1))"
+              CLIENT_PORT="888$((ORDINAL + 1))"
+              RAFT_PORT="988$((ORDINAL + 1))"
+
+              # 构建 PEERS（排除自身）
+              PEERS=""
+              for i in 0 1 2; do
+                if [ "$i" != "$ORDINAL" ]; then
+                  PEER_NODE="node$((i + 1))"
+                  PEER_HOST="hutulock-${i}.hutulock-raft.hutulock.svc.cluster.local"
+                  PEER_RAFT_PORT="988$((i + 1))"
+                  PEERS="${PEERS} ${PEER_NODE}:${PEER_HOST}:${PEER_RAFT_PORT}"
+                fi
+              done
+
+              echo "NODE_ID=${NODE_ID}" > /env/node.env
+              echo "CLIENT_PORT=${CLIENT_PORT}" >> /env/node.env
+              echo "RAFT_PORT=${RAFT_PORT}" >> /env/node.env
+              echo "PEERS=${PEERS# }" >> /env/node.env
+
+              echo "Init complete: NODE_ID=${NODE_ID}, PEERS=${PEERS}"
+          volumeMounts:
+            - name: node-env
+              mountPath: /env
+
+      containers:
+        - name: hutulock-server
+          image: hutulock/server:1.0.1  # 替换为你的镜像仓库地址
+          imagePullPolicy: IfNotPresent
+
+          # 从 init container 生成的文件读取环境变量
+          command:
+            - sh
+            - -c
+            - |
+              . /env/node.env
+              export NODE_ID CLIENT_PORT RAFT_PORT PEERS
+              exec /app/entrypoint.sh
+
+          env:
+            - name: JVM_OPTS
+              value: "-Xms512m -Xmx1g -XX:+UseG1GC -XX:+HeapDumpOnOutOfMemoryError"
+            - name: CONFIG_FILE
+              value: "/app/config/hutulock.yml"
+
+          ports:
+            - name: client
+              containerPort: 8881
+            - name: raft
+              containerPort: 9881
+            - name: metrics
+              containerPort: 9090
+            - name: admin
+              containerPort: 9091
+
+          volumeMounts:
+            - name: node-env
+              mountPath: /env
+            - name: config
+              mountPath: /app/config
+            - name: data
+              mountPath: /app/data
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "768Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1.5Gi"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 3
+
+      volumes:
+        - name: node-env
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: hutulock-config
+
+  # 持久化存储：每个节点独立的 PVC（Raft WAL + 快照）
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+        # storageClassName: standard  # 按需指定，留空使用集群默认

@@ -151,7 +151,7 @@ public final class LockContext {
         private final String lockName;
         private final String sessionId;
         private long   ttlMs              = 30_000;
-        private long   watchdogIntervalMs = 10_000;
+        private long   watchdogIntervalMs = 9_000;
         private Consumer<String> onExpiredCallback;
         private ScheduledExecutorService scheduler;
 

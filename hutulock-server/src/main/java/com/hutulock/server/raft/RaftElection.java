@@ -250,10 +250,19 @@ public final class RaftElection {
             return;
         }
 
-        int    term      = parseInt(msg, i1 + 1, i2);
-        String candidate = msg.substring(i2 + 1, i3);
-        int    lastIdx   = parseInt(msg, i3 + 1, i4);
-        int    lastTerm  = parseInt(msg, i4 + 1, msg.length());
+        int    term;
+        String candidate;
+        int    lastIdx;
+        int    lastTerm;
+        try {
+            term      = parseInt(msg, i1 + 1, i2);
+            candidate = msg.substring(i2 + 1, i3);
+            lastIdx   = parseInt(msg, i3 + 1, i4);
+            lastTerm  = parseInt(msg, i4 + 1, msg.length());
+        } catch (NumberFormatException e) {
+            log.warn("VOTE_REQ numeric parse error: {}, msg={}", e.getMessage(), msg);
+            return;
+        }
 
         if (term > state.currentTerm) {
             state.currentTerm = term;
@@ -338,13 +347,21 @@ public final class RaftElection {
 
     /**
      * 从字符串 [start, end) 区间解析整数，避免 {@link Integer#parseInt(String)} 的子串分配。
+     * 若区间为空或包含非数字字符，抛出 {@link NumberFormatException}。
      */
     private static int parseInt(String s, int start, int end) {
+        if (start >= end) throw new NumberFormatException("empty range [" + start + "," + end + ")");
         int result = 0;
-        for (int i = start; i < end; i++) {
-            result = result * 10 + (s.charAt(i) - '0');
+        boolean negative = false;
+        int i = start;
+        if (s.charAt(i) == '-') { negative = true; i++; }
+        if (i >= end) throw new NumberFormatException("only sign in range");
+        for (; i < end; i++) {
+            char c = s.charAt(i);
+            if (c < '0' || c > '9') throw new NumberFormatException("non-digit '" + c + "' at " + i);
+            result = result * 10 + (c - '0');
         }
-        return result;
+        return negative ? -result : result;
     }
 
     /**

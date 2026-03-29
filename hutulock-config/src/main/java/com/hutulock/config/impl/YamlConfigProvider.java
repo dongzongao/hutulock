@@ -193,7 +193,7 @@ public class YamlConfigProvider implements ConfigProvider {
         Map<String, Object> watchdog = getMap(client, "watchdog");
         if (watchdog != null) {
             b.watchdogTtl(getLong(watchdog, "ttl", 30_000L));
-            b.watchdogInterval(getLong(watchdog, "interval", 10_000L));
+            b.watchdogInterval(getLong(watchdog, "interval", 9_000L));
         }
 
         return b.build();

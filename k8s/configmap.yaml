@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hutulock-config
+  namespace: hutulock
+data:
+  hutulock.yml: |
+    hutulock:
+      server:
+        raft:
+          electionTimeoutMin: 150
+          electionTimeoutMax: 300
+          heartbeatInterval: 45
+          proposeTimeout: 10000
+          proposeRetryCount: 3
+          proposeRetryDelay: 500
+        watchdog:
+          ttl: 30000
+          scanInterval: 1000
+        network:
+          soBacklog: 128
+          raftConnectTimeout: 3000
+          maxFrameLength: 4096
+        metrics:
+          enabled: true
+          port: 9090
+        admin:
+          enabled: true
+          port: 9091
+      security:
+        enabled: false
+        tls:
+          enabled: false
+        rateLimit:
+          qps: 100
+          burst: 200
+      client:
+        connectTimeout: 3000
+        lockTimeout: 30
+        watchdog:
+          ttl: 30000
+          interval: 9000

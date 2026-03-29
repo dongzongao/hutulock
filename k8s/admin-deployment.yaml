@@ -1,0 +1,87 @@
+---
+# Admin UI Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hutulock-admin
+  namespace: hutulock
+  labels:
+    app: hutulock-admin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hutulock-admin
+  template:
+    metadata:
+      labels:
+        app: hutulock-admin
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+            - name: ui-dist
+              mountPath: /usr/share/nginx/html
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: hutulock-admin-nginx
+        - name: ui-dist
+          emptyDir: {}  # 实际使用时替换为包含构建产物的 initContainer 或镜像
+
+---
+# Nginx 配置：反向代理 Admin API
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hutulock-admin-nginx
+  namespace: hutulock
+data:
+  default.conf: |
+    server {
+        listen 80;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # SPA 路由支持
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # 反向代理 Admin API 到后端
+        location /api/ {
+            proxy_pass http://hutulock-client:9091/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+    }
+
+---
+# Admin UI Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: hutulock-admin
+  namespace: hutulock
+  labels:
+    app: hutulock-admin
+spec:
+  type: ClusterIP
+  selector:
+    app: hutulock-admin
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

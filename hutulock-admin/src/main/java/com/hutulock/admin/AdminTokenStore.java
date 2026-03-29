@@ -51,7 +51,9 @@ public final class AdminTokenStore {
      * 验证用户名密码，成功返回新 token，失败返回 null。
      */
     public String login(String username, String password) {
-        if (!DEFAULT_USERNAME.equals(username) || !DEFAULT_PASSWORD.equals(password)) {
+        // 使用 MessageDigest.isEqual 做常量时间比较，防止 timing attack
+        if (!constantTimeEquals(DEFAULT_USERNAME, username)
+                || !constantTimeEquals(DEFAULT_PASSWORD, password)) {
             return null;
         }
         byte[] bytes = new byte[32];
@@ -59,6 +61,13 @@ public final class AdminTokenStore {
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         tokens.put(token, System.currentTimeMillis() + TOKEN_TTL_MS);
         return token;
+    }
+
+    /** 常量时间字符串比较，防止 timing attack。 */
+    private static boolean constantTimeEquals(String a, String b) {
+        return java.security.MessageDigest.isEqual(
+            a.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            b.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     /**

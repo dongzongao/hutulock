@@ -56,7 +56,7 @@ public final class ClientProperties {
         private int     connectTimeoutMs   = 3_000;
         private int     lockTimeoutS       = 30;
         private long    watchdogTtlMs      = 30_000;
-        private long    watchdogIntervalMs = 10_000;
+        private long    watchdogIntervalMs = 9_000;
         private int     maxFrameLength     = 1024;
         private boolean metricsEnabled     = true;
 

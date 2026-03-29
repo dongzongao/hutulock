@@ -48,7 +48,7 @@ RUN addgroup -S hutulock && adduser -S hutulock -G hutulock
 WORKDIR /app
 
 # 复制 JAR
-COPY --from=builder /build/hutulock-server/target/hutulock-server-1.0.0.jar app.jar
+COPY --from=builder /build/hutulock-server/target/hutulock-server-*.jar app.jar
 
 # 创建目录
 RUN mkdir -p /app/logs /app/config && \

@@ -1,0 +1,60 @@
+---
+# Headless Service — Raft 节点间通信，提供稳定 DNS（pod-name.hutulock-raft.hutulock.svc）
+apiVersion: v1
+kind: Service
+metadata:
+  name: hutulock-raft
+  namespace: hutulock
+  labels:
+    app: hutulock-server
+spec:
+  clusterIP: None
+  selector:
+    app: hutulock-server
+  ports:
+    - name: raft
+      port: 9881
+      targetPort: 9881
+    - name: client
+      port: 8881
+      targetPort: 8881
+
+---
+# ClusterIP Service — 客户端连接入口（集群内部）
+apiVersion: v1
+kind: Service
+metadata:
+  name: hutulock-client
+  namespace: hutulock
+  labels:
+    app: hutulock-server
+spec:
+  type: ClusterIP
+  selector:
+    app: hutulock-server
+  ports:
+    - name: client
+      port: 8881
+      targetPort: 8881
+
+---
+# ClusterIP Service — Metrics（Prometheus 抓取）
+apiVersion: v1
+kind: Service
+metadata:
+  name: hutulock-metrics
+  namespace: hutulock
+  labels:
+    app: hutulock-server
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: hutulock-server
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: 9090

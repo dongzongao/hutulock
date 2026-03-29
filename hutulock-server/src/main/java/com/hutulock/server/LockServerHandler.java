@@ -242,8 +242,15 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
             return;
         }
         String path            = msg.arg(0);
-        int    expectedVersion = Integer.parseInt(msg.arg(1));
-        byte[] data            = java.util.Base64.getDecoder().decode(msg.arg(2));
+        int    expectedVersion;
+        byte[] data;
+        try {
+            expectedVersion = Integer.parseInt(msg.arg(1));
+            data            = java.util.Base64.getDecoder().decode(msg.arg(2));
+        } catch (IllegalArgumentException e) {
+            ctx.writeAndFlush(Message.of(CommandType.ERROR, "invalid SET_DATA args: " + e.getMessage()).serialize() + "\n");
+            return;
+        }
 
         try {
             ZNodePath zpath = ZNodePath.of(path);
