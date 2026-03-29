@@ -158,6 +158,19 @@ public class YamlConfigProvider implements ConfigProvider {
             b.metricsPort(getInt(metrics, "port", 9090));
         }
 
+        // Admin
+        Map<String, Object> admin = getMap(server, "admin");
+        if (admin != null) {
+            b.adminEnabled(getBool(admin, "enabled", true));
+            b.adminPort(getInt(admin, "port", 9091));
+            String u = getString(admin, "username", null);
+            String p = getString(admin, "password", null);
+            if (u != null) b.adminUsername(u);
+            if (p != null) b.adminPassword(p);
+            long ttl = getLong(admin, "tokenTtlHours", -1L);
+            if (ttl > 0) b.adminTokenTtl(ttl * 3600_000L);
+        }
+
         // 安全
         Map<String, Object> security = getMap(server, "security");
         if (security != null) {

@@ -78,6 +78,12 @@ public final class ServerProperties {
     public final boolean adminEnabled;
     /** Admin 控制台 HTTP 端口，默认 9091 */
     public final int     adminPort;
+    /** Admin 控制台用户名，默认 admin */
+    public final String  adminUsername;
+    /** Admin 控制台密码，默认 admin123 */
+    public final String  adminPassword;
+    /** Admin token 有效期（毫秒），默认 8 小时 */
+    public final long    adminTokenTtlMs;
 
     // ---- 安全参数 ----
 
@@ -112,6 +118,9 @@ public final class ServerProperties {
         this.metricsPort           = b.metricsPort;
         this.adminEnabled          = b.adminEnabled;
         this.adminPort             = b.adminPort;
+        this.adminUsername         = b.adminUsername;
+        this.adminPassword         = b.adminPassword;
+        this.adminTokenTtlMs       = b.adminTokenTtlMs;
         this.securityEnabled       = b.securityEnabled;
         this.tlsEnabled            = b.tlsEnabled;
         this.tlsCertFile           = b.tlsCertFile;
@@ -145,6 +154,9 @@ public final class ServerProperties {
         private int     metricsPort            = 9090;
         private boolean adminEnabled           = true;
         private int     adminPort              = 9091;
+        private String  adminUsername          = "admin";
+        private String  adminPassword          = "admin123";
+        private long    adminTokenTtlMs        = 8 * 60 * 60 * 1000L;
         // 安全参数
         private boolean securityEnabled        = false;
         private boolean tlsEnabled             = false;
@@ -171,6 +183,9 @@ public final class ServerProperties {
         public Builder metricsPort(int port)         { metricsPort            = port;return this; }
         public Builder adminEnabled(boolean b)       { adminEnabled           = b;   return this; }
         public Builder adminPort(int port)           { adminPort              = port;return this; }
+        public Builder adminUsername(String u)       { adminUsername          = u;   return this; }
+        public Builder adminPassword(String p)       { adminPassword          = p;   return this; }
+        public Builder adminTokenTtl(long ms)        { adminTokenTtlMs        = ms;  return this; }
         public Builder securityEnabled(boolean b)    { securityEnabled        = b;   return this; }
         public Builder tlsEnabled(boolean b)         { tlsEnabled             = b;   return this; }
         public Builder tlsCertFile(String f)         { tlsCertFile            = f;   return this; }

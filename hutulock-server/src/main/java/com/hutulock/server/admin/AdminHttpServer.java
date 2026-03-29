@@ -57,7 +57,7 @@ public class AdminHttpServer implements Lifecycle {
     private final RaftNode               raftNode;
     private final DefaultSessionManager  sessionManager;
     private final DefaultZNodeTree       zNodeTree;
-    private final AdminTokenStore        tokenStore = new AdminTokenStore();
+    private final AdminTokenStore        tokenStore;
     private HttpServer                   server;
     private ScheduledExecutorService     cleaner;
 
@@ -68,6 +68,22 @@ public class AdminHttpServer implements Lifecycle {
         this.raftNode       = raftNode;
         this.sessionManager = sessionManager;
         this.zNodeTree      = zNodeTree;
+        this.tokenStore     = new AdminTokenStore(
+            com.hutulock.config.api.ServerProperties.builder().build().adminUsername,
+            com.hutulock.config.api.ServerProperties.builder().build().adminPassword,
+            com.hutulock.config.api.ServerProperties.builder().build().adminTokenTtlMs);
+    }
+
+    public AdminHttpServer(int port, String nodeId, RaftNode raftNode,
+                           DefaultSessionManager sessionManager, DefaultZNodeTree zNodeTree,
+                           com.hutulock.config.api.ServerProperties props) {
+        this.port           = port;
+        this.nodeId         = nodeId;
+        this.raftNode       = raftNode;
+        this.sessionManager = sessionManager;
+        this.zNodeTree      = zNodeTree;
+        this.tokenStore     = new AdminTokenStore(
+            props.adminUsername, props.adminPassword, props.adminTokenTtlMs);
     }
 
     @Override
@@ -96,8 +112,8 @@ public class AdminHttpServer implements Lifecycle {
         });
         cleaner.scheduleAtFixedRate(tokenStore::evictExpired, 1, 1, TimeUnit.HOURS);
 
-        log.info("Admin HTTP server started on port {} — default user: {}/{}",
-            port, AdminTokenStore.DEFAULT_USERNAME, AdminTokenStore.DEFAULT_PASSWORD);
+        log.info("Admin HTTP server started on port {} — user: {}",
+            port, tokenStore.getUsername());
     }
 
     @Override

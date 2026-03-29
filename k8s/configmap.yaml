@@ -27,6 +27,10 @@ data:
         admin:
           enabled: true
           port: 9091
+          # 生产环境通过 Secret 覆盖，此处为默认值
+          username: admin
+          password: admin123
+          tokenTtlHours: 8
       security:
         enabled: false
         tls:

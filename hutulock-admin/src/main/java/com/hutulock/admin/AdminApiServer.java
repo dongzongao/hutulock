@@ -75,7 +75,22 @@ public class AdminApiServer implements Lifecycle {
         this.raftNode       = raftNode;
         this.sessionManager = sessionManager;
         this.zNodeTree      = zNodeTree;
-        this.tokenStore     = new AdminTokenStore();
+        this.tokenStore     = new AdminTokenStore(
+            com.hutulock.config.api.ServerProperties.builder().build().adminUsername,
+            com.hutulock.config.api.ServerProperties.builder().build().adminPassword,
+            com.hutulock.config.api.ServerProperties.builder().build().adminTokenTtlMs);
+    }
+
+    public AdminApiServer(int port, String nodeId, RaftNode raftNode,
+                          DefaultSessionManager sessionManager, DefaultZNodeTree zNodeTree,
+                          com.hutulock.config.api.ServerProperties props) {
+        this.port           = port;
+        this.nodeId         = nodeId;
+        this.raftNode       = raftNode;
+        this.sessionManager = sessionManager;
+        this.zNodeTree      = zNodeTree;
+        this.tokenStore     = new AdminTokenStore(
+            props.adminUsername, props.adminPassword, props.adminTokenTtlMs);
     }
 
     @Override
@@ -109,8 +124,8 @@ public class AdminApiServer implements Lifecycle {
         });
         cleaner.scheduleAtFixedRate(tokenStore::evictExpired, 1, 1, TimeUnit.HOURS);
 
-        log.info("Admin console started on port {} — default user: {}/{}",
-            port, AdminTokenStore.DEFAULT_USERNAME, AdminTokenStore.DEFAULT_PASSWORD);
+        log.info("Admin console started on port {} — user: {}",
+            port, tokenStore.getUsername());
     }
 
     @Override

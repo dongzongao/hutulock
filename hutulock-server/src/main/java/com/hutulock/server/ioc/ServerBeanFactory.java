@@ -234,7 +234,8 @@ public final class ServerBeanFactory {
                 props.adminPort, nodeId,
                 ctx.getBean(RaftNode.class),
                 sessionMgr,
-                tree);
+                tree,
+                props);  // 传入 props，AdminHttpServer 从中取凭证，不再硬编码
         }));
     }
 }
