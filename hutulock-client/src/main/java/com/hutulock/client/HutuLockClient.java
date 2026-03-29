@@ -243,9 +243,21 @@ public class HutuLockClient implements AutoCloseable {
         handler.registerWatcher(ctx.getSeqNodePath(), watchFuture::complete);
 
         long remaining = deadline - System.currentTimeMillis();
-        if (remaining <= 0) return false;
+        if (remaining <= 0) {
+            // 超时：清理已注册的 Watcher，避免内存泄漏
+            handler.unregisterWatcher(ctx.getSeqNodePath());
+            return false;
+        }
 
-        WatchEvent event = watchFuture.get(remaining, TimeUnit.MILLISECONDS);
+        WatchEvent event;
+        try {
+            event = watchFuture.get(remaining, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            // 超时：清理已注册的 Watcher，避免内存泄漏
+            handler.unregisterWatcher(ctx.getSeqNodePath());
+            return false;
+        }
+
         if (event.getType() == WatchEvent.Type.SESSION_EXPIRED) {
             ctx.markExpired();
             return false;
@@ -395,7 +407,7 @@ public class HutuLockClient implements AutoCloseable {
 
     // ==================== 重连 ====================
 
-    private void handleRedirect(String leaderId) {
+    private synchronized void handleRedirect(String leaderId) {
         log.info("Redirected to leader: {}, reconnecting...", leaderId);
         try {
             if (channel != null) channel.close().sync();
@@ -413,9 +425,17 @@ public class HutuLockClient implements AutoCloseable {
     @Override
     public void close() {
         heldContexts.values().forEach(LockContext::stopWatchdog);
-        watchdogScheduler.shutdownNow();
+        watchdogScheduler.shutdown();
+        try {
+            if (!watchdogScheduler.awaitTermination(3, TimeUnit.SECONDS)) {
+                watchdogScheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            watchdogScheduler.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
         if (channel != null) channel.close();
-        group.shutdownGracefully();
+        group.shutdownGracefully(0, 3, TimeUnit.SECONDS);
     }
 
     // ==================== Builder ====================

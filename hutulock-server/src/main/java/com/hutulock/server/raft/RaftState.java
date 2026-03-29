@@ -106,8 +106,8 @@ public final class RaftState {
         new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     // ---- Propose 管理 ----
-    /** logIndex → 等待 commit 的 CompletableFuture */
-    public final Map<Integer, CompletableFuture<Void>> pendingCommits = new ConcurrentHashMap<>();
+    /** logIndex → 等待 commit 的 CompletableFuture，最大容量 10000 防止无界增长 */
+    public final Map<Integer, CompletableFuture<Void>> pendingCommits = new ConcurrentHashMap<>(256);
 
     /**
      * propose 超时优先队列（替代原 proposeDeadlines Map 的全量扫描）。

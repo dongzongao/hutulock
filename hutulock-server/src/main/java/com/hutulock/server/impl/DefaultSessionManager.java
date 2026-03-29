@@ -105,8 +105,8 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
         Session s = sessions.get(sessionId);
         if (s == null) return;
         s.heartbeat();
-        // ZooKeeper ExpiryQueue 设计：heartbeat 后重新入队，确保过期时间更新到队列
-        // PriorityQueue 不支持 decrease-key，用 remove+offer 实现（O(log n)）
+        // remove+offer 必须与 scanExpiredSessions 的 peek+poll 用同一把锁，
+        // 否则 scan 可能在 remove 后、offer 前 poll 到已续期的 session 并错误过期
         synchronized (expiryQueue) {
             expiryQueue.remove(s);
             expiryQueue.offer(s);
@@ -186,7 +186,6 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
     }
 
     private void scanExpiredSessions() {
-        // 只检查队头（最早过期的），避免全表扫描
         long now = System.currentTimeMillis();
         while (true) {
             Session session;
@@ -195,7 +194,8 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
                 if (session == null || session.getExpireTime() > now) break;
                 expiryQueue.poll();
             }
-            // 会话可能已被 heartbeat 续期或已关闭，需二次确认
+            // 二次确认：heartbeat 可能在 poll 后已续期（session.isExpired() 会重新检查时间戳）
+            // sessions.containsKey 确认未被 closeSession 提前移除
             if (sessions.containsKey(session.getSessionId()) && session.isExpired()) {
                 expireSession(session);
             }

@@ -143,6 +143,11 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
         watcherCallbacks.put(path, callback);
     }
 
+    /** 注销 Watcher 回调（超时或取消时调用，防止内存泄漏）。 */
+    public void unregisterWatcher(String path) {
+        watcherCallbacks.remove(path);
+    }
+
     public void setRedirectListener(Consumer<String> listener) {
         this.redirectListener = listener;
     }

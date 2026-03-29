@@ -178,6 +178,14 @@ public final class RaftReplication {
 
     /** 追加日志、注册 future，然后 flush pipeline（批量发送）。 */
     private CompletableFuture<Void> doPropose(String command) {
+        // 容量保护：pendingCommits 过多说明提交严重滞后，快速失败比无限堆积更安全
+        if (state.pendingCommits.size() >= 10_000) {
+            metrics.onRaftProposeRejected();
+            CompletableFuture<Void> f = new CompletableFuture<>();
+            f.completeExceptionally(new IllegalStateException(
+                "PROPOSE_BACKPRESSURE: too many pending commits (" + state.pendingCommits.size() + ")"));
+            return f;
+        }
         long startMs = System.currentTimeMillis();
         int  index   = state.raftLog.lastIndex() + 1;
         state.raftLog.append(new RaftLog.Entry(state.currentTerm, index, command));
