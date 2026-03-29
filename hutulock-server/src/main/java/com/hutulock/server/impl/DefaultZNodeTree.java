@@ -178,12 +178,14 @@ public class DefaultZNodeTree implements ZNodeStorage {
     public List<ZNodePath> getChildren(ZNodePath path) {
         Set<String> cp = children.get(path.value());
         if (cp == null || cp.isEmpty()) return Collections.emptyList();
-        // TreeSet 已有序，直接遍历，O(n)，无需再排序
-        List<ZNodePath> result;
-        synchronized (cp) {
-            result = new ArrayList<>(cp.size());
-            for (String s : cp) result.add(pathCache.get(s));
-        }
+        // 对 cp 做快照，避免遍历期间并发修改
+        // cp 可能是 ConcurrentHashMap.KeySetView 或 synchronizedSortedSet，
+        // toArray() 在两种情况下都是线程安全的快照操作
+        Object[] arr = cp.toArray();
+        List<ZNodePath> result = new ArrayList<>(arr.length);
+        for (Object s : arr) result.add(pathCache.get((String) s));
+        // 保证字典序（TreeSet 已有序，KeySetView 无序需排序）
+        result.sort(Comparator.comparing(ZNodePath::value));
         return result;
     }
 

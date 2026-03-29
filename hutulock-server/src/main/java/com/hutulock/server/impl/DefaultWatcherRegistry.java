@@ -109,15 +109,19 @@ public class DefaultWatcherRegistry implements WatcherRegistry {
 
     @Override
     public void removeChannel(Channel channel) {
-        Set<String> paths = channelPaths.remove(channel.id().asShortText());
+        String channelId = channel.id().asShortText();
+        // 清理 one-shot watcher 的反向索引
+        Set<String> paths = channelPaths.remove(channelId);
         if (paths != null) {
             for (String p : paths) {
                 Set<Channel> chs = watchers.get(p);
                 if (chs != null) chs.remove(channel);
             }
         }
-        // 同时清理持久 watcher
+        // 清理持久 watcher（遍历所有路径，移除该 channel）
+        // 注意：持久 watcher 没有反向索引，需全量扫描，但持久 watcher 数量通常很少
         persistentWatchers.values().forEach(set -> set.remove(channel));
+        log.debug("Removed all watchers for channel: {}", channelId);
     }
 
     @Override

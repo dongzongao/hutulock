@@ -131,6 +131,14 @@ public class RaftLog implements Lifecycle {
     public void shutdown() {
         lock.writeLock().lock();
         try {
+            // fsync 确保最后一批数据落盘，再关闭流
+            if (walOut != null) {
+                try {
+                    walOut.getChannel().force(true);
+                } catch (IOException e) {
+                    log.warn("Final fsync failed on shutdown: {}", e.getMessage());
+                }
+            }
             closeWalOut();
             log.info("RaftLog shutdown — walPath={}, entries={}", walPath, entries.size() - 1);
         } finally {
@@ -148,7 +156,12 @@ public class RaftLog implements Lifecycle {
         lock.writeLock().lock();
         try {
             entries.add(entry);
-            if (walOut != null) {
+            if (walPath != null) {
+                // walOut 可能因上次写入失败被关闭，自动重新打开
+                if (walOut == null) {
+                    log.warn("WAL stream was closed, reopening: {}", walPath);
+                    openWalAppend();
+                }
                 writeEntryToWal(walOut, entry);
             }
         } finally {
@@ -274,7 +287,7 @@ public class RaftLog implements Lifecycle {
         }
     }
 
-    /** 将单条 Entry 写入 WAL 并 fsync。 */
+    /** 将单条 Entry 写入 WAL 并 fsync。写入失败时关闭流（下次 append 会重新打开）。 */
     private void writeEntryToWal(FileOutputStream out, Entry entry) {
         try {
             String line = entry.index + "\t" + entry.term + "\t"
@@ -283,6 +296,8 @@ public class RaftLog implements Lifecycle {
             out.getChannel().force(false); // fsync data（不强制 metadata，性能更好）
         } catch (IOException e) {
             log.error("WAL write failed for entry {}: {}", entry.index, e.getMessage());
+            // 关闭损坏的流，下次 append 时重新打开，避免继续写入损坏数据
+            closeWalOut();
             throw new RuntimeException("WAL write failed", e);
         }
     }

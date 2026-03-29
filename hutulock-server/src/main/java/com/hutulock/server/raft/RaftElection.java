@@ -103,7 +103,9 @@ public final class RaftElection {
 
     public void cancelHeartbeat() {
         if (heartbeatTimer != null) {
-            heartbeatTimer.cancel(false);
+            // cancel(true) 中断正在执行的心跳任务，确保关闭后不再发出心跳
+            // 心跳任务（flushPipeline）是幂等的，中断不会造成状态损坏
+            heartbeatTimer.cancel(true);
             heartbeatTimer = null;
         }
     }
