@@ -150,6 +150,11 @@ public class DefaultEventBus implements EventBus {
     @Override
     public void shutdown() {
         running = false;
+        // 先 drain 队列中剩余事件（同步处理），避免关键事件（如 SESSION_EXPIRED）丢失
+        HutuEvent remaining;
+        while ((remaining = eventQueue.poll()) != null) {
+            dispatch(remaining);
+        }
         dispatcher.shutdown();
         try {
             if (!dispatcher.awaitTermination(5, TimeUnit.SECONDS)) {

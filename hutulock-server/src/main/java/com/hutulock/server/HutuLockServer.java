@@ -39,6 +39,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.util.concurrent.TimeUnit;
 
 /**
  * HutuLock 服务端启动入口
@@ -157,9 +158,16 @@ public class HutuLockServer {
 
             future.channel().closeFuture().sync();
         } finally {
-            boss.shutdownGracefully();
-            worker.shutdownGracefully();
-            // 容器按逆序关闭所有 Lifecycle Bean
+            // 先等待 Netty 线程组完全停止，再关闭业务 Bean
+            // 避免 Bean shutdown 时仍有 Netty 线程在调用业务方法
+            try {
+                boss.shutdownGracefully(0, 3, TimeUnit.SECONDS).sync();
+                worker.shutdownGracefully(0, 3, TimeUnit.SECONDS).sync();
+            } catch (InterruptedException e) {
+                boss.shutdownNow();
+                worker.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
             ctx.close();
         }
     }

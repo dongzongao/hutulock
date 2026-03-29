@@ -84,7 +84,8 @@ public class RaftNode implements Lifecycle {
         return t;
     });
 
-    private final EventLoopGroup raftGroup = new NioEventLoopGroup();
+    private final EventLoopGroup raftGroup    = new NioEventLoopGroup(1);
+    private final EventLoopGroup raftWorkers  = new NioEventLoopGroup();
 
     /**
      * 构造 Raft 节点（内存模式，测试用）。
@@ -353,8 +354,9 @@ public class RaftNode implements Lifecycle {
 
     private void startRaftServer() throws InterruptedException {
         try {
+            // 复用 raftGroup/raftWorkers，shutdown() 时统一关闭，避免匿名 EventLoopGroup 泄漏
             new ServerBootstrap()
-                .group(new NioEventLoopGroup(1), new NioEventLoopGroup())
+                .group(raftGroup, raftWorkers)
                 .channel(NioServerSocketChannel.class)
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override protected void initChannel(SocketChannel ch) {
@@ -420,8 +422,19 @@ public class RaftNode implements Lifecycle {
     @Override
     public void shutdown() {
         election.cancelHeartbeat();
-        scheduler.shutdownNow();
-        raftGroup.shutdownGracefully();
+        // 先停止调度器，再关闭网络，避免关闭期间仍有心跳发出
+        scheduler.shutdown();
+        try {
+            if (!scheduler.awaitTermination(3, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scheduler.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        // 等待 Netty 线程组完全释放，避免 JVM 无法退出
+        raftGroup.shutdownGracefully(0, 3, TimeUnit.SECONDS);
+        raftWorkers.shutdownGracefully(0, 3, TimeUnit.SECONDS);
         log.info("RaftNode [{}] shutdown", nodeId);
     }
 }

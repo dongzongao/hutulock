@@ -132,18 +132,37 @@ public class ApplicationContext implements AutoCloseable {
 
     /**
      * 按注册顺序启动所有实现了 {@link Lifecycle} 的 Bean。
+     * 若任意 Bean 启动失败，回滚已启动的 Bean（逆序 shutdown），保证不留下半启动状态。
      *
      * @throws Exception 任意 Bean 启动失败时抛出
      */
     public void start() throws Exception {
         log.info("ApplicationContext starting — {} beans registered", definitions.size());
-        for (String name : registrationOrder) {
-            Object bean = getBean(name);   // 确保全部实例化
-            if (bean instanceof Lifecycle) {
-                log.debug("Starting lifecycle bean: {}", name);
-                ((Lifecycle) bean).start();
+        List<String> started = new ArrayList<>();
+        try {
+            for (String name : registrationOrder) {
+                Object bean = getBean(name);
+                if (bean instanceof Lifecycle) {
+                    log.debug("Starting lifecycle bean: {}", name);
+                    ((Lifecycle) bean).start();
+                    started.add(name);
+                }
             }
-        }        log.info("ApplicationContext started");
+        } catch (Exception e) {
+            log.error("ApplicationContext start failed, rolling back {} started beans", started.size());
+            // 逆序关闭已启动的 Bean，避免半启动状态
+            List<String> toRollback = new ArrayList<>(started);
+            Collections.reverse(toRollback);
+            for (String name : toRollback) {
+                Object bean = singletons.get(name);
+                if (bean instanceof Lifecycle) {
+                    try { ((Lifecycle) bean).shutdown(); }
+                    catch (Exception ex) { log.warn("Rollback shutdown failed for [{}]: {}", name, ex.getMessage()); }
+                }
+            }
+            throw e;
+        }
+        log.info("ApplicationContext started");
     }
 
     /**

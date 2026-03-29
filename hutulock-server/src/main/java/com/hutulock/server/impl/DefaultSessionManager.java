@@ -172,7 +172,16 @@ public class DefaultSessionManager implements SessionTracker, Lifecycle {
 
     @Override
     public void shutdown() {
-        scanner.shutdownNow();
+        // 先停止扫描，等待当前扫描任务完成，避免关闭期间会话清理被中断
+        scanner.shutdown();
+        try {
+            if (!scanner.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                scanner.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scanner.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
         log.info("SessionManager shutdown");
     }
 

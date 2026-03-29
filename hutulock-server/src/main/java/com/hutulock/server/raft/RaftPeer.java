@@ -113,17 +113,18 @@ public class RaftPeer {
 
     /** 发送消息，若连接不可用则记录 warn 并丢弃（避免静默失败）。 */
     public void send(String msg) {
-        Channel ch = channel;
-        if (ch != null && ch.isActive()) {
-            ch.writeAndFlush(msg + "\n").addListener((ChannelFutureListener) f -> {
-                if (!f.isSuccess()) {
-                    log.warn("Raft [{}] failed to send to peer {}: {}", owner.getNodeId(), nodeId,
-                        f.cause() != null ? f.cause().getMessage() : "unknown");
-                }
-            });
-        } else {
+        Channel ch = channel;  // 本地变量，避免 TOCTOU：检查后 channel 被置 null
+        if (ch == null || !ch.isActive()) {
             log.debug("Raft [{}] drop message to peer {} (not connected): {}",
                 owner.getNodeId(), nodeId, msg.split(" ", 2)[0]);
+            return;
         }
+        ch.writeAndFlush(msg + "\n").addListener((ChannelFutureListener) f -> {
+            if (!f.isSuccess() && !(f.cause() instanceof java.nio.channels.ClosedChannelException)) {
+                // 忽略 ClosedChannelException：channel 在发送途中关闭是正常的断线场景
+                log.warn("Raft [{}] failed to send to peer {}: {}", owner.getNodeId(), nodeId,
+                    f.cause() != null ? f.cause().getMessage() : "unknown");
+            }
+        });
     }
 }
