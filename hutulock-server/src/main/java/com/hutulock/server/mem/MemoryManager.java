@@ -71,7 +71,7 @@ public final class MemoryManager implements Lifecycle {
     }
 
     public ZNodePathCache              getPathCache()     { return pathCache;     }
-    public ObjectPool<PooledLockToken> getLockTokenPool() { return lockTokenPool; }
+    public Pool<PooledLockToken>       getLockTokenPool() { return lockTokenPool; }
 
     // ==================== 实时快照 ====================
 
@@ -79,59 +79,29 @@ public final class MemoryManager implements Lifecycle {
      * 返回当前内存管理器的运行时快照，可用于指标上报或健康检查。
      */
     public Stats snapshot() {
-        return new Stats(
-            pathCache.size(),
-            pathCache.hitRate(),
-            pathCache.getBypassCount(),
-            pathCache.getEvictCount(),
-            lockTokenPool.getBorrowCount(),
-            lockTokenPool.localHitRate(),
-            lockTokenPool.globalHitRate(),
-            lockTokenPool.newAllocRate(),
-            lockTokenPool.getDiscardCount(),
-            lockTokenPool.globalPoolSize()
-        );
+        return new Stats(pathCache.stats(), lockTokenPool.stats());
     }
 
     /**
-     * 内存管理器运行时快照（不可变值对象）。
+     * 内存管理器运行时快照（聚合 {@link CacheStats} 和 {@link PoolStats}）。
      */
     public static final class Stats {
-        public final int    pathCacheSize;
-        public final double pathCacheHitRate;
-        public final long   pathCacheBypasses;
-        public final long   pathCacheEvictions;
-        public final long   tokenBorrowCount;
-        public final double tokenLocalHitRate;
-        public final double tokenGlobalHitRate;
-        public final double tokenNewAllocRate;
-        public final long   tokenDiscardCount;
-        public final int    tokenGlobalPoolSize;
+        public final CacheStats cache;
+        public final PoolStats  pool;
 
-        Stats(int pathCacheSize, double pathCacheHitRate, long pathCacheBypasses,
-              long pathCacheEvictions, long tokenBorrowCount, double tokenLocalHitRate,
-              double tokenGlobalHitRate, double tokenNewAllocRate,
-              long tokenDiscardCount, int tokenGlobalPoolSize) {
-            this.pathCacheSize      = pathCacheSize;
-            this.pathCacheHitRate   = pathCacheHitRate;
-            this.pathCacheBypasses  = pathCacheBypasses;
-            this.pathCacheEvictions = pathCacheEvictions;
-            this.tokenBorrowCount   = tokenBorrowCount;
-            this.tokenLocalHitRate  = tokenLocalHitRate;
-            this.tokenGlobalHitRate = tokenGlobalHitRate;
-            this.tokenNewAllocRate  = tokenNewAllocRate;
-            this.tokenDiscardCount  = tokenDiscardCount;
-            this.tokenGlobalPoolSize= tokenGlobalPoolSize;
+        Stats(CacheStats cache, PoolStats pool) {
+            this.cache = cache;
+            this.pool  = pool;
+        }
+
+        /** 是否存在任何需要关注的异常信号（缓存降级或对象池丢弃）。 */
+        public boolean hasWarnings() {
+            return cache.hasBypasses() || pool.hasDiscards();
         }
 
         @Override
         public String toString() {
-            return String.format(
-                "MemoryStats{pathCache=[size=%d, hitRate=%.2f%%, bypasses=%d, evictions=%d], " +
-                "lockToken=[borrows=%d, localHit=%.2f%%, globalHit=%.2f%%, newAlloc=%.2f%%, discards=%d, poolSize=%d]}",
-                pathCacheSize, pathCacheHitRate * 100, pathCacheBypasses, pathCacheEvictions,
-                tokenBorrowCount, tokenLocalHitRate * 100, tokenGlobalHitRate * 100,
-                tokenNewAllocRate * 100, tokenDiscardCount, tokenGlobalPoolSize);
+            return "MemoryStats{" + cache + ", " + pool + "}";
         }
     }
 

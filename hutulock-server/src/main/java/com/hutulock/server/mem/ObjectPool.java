@@ -41,7 +41,7 @@ import com.hutulock.model.util.Numbers;
  *
  * @param <T> pooled object type, must implement {@link Pooled}
  */
-public final class ObjectPool<T extends ObjectPool.Pooled> {
+public final class ObjectPool<T extends ObjectPool.Pooled> implements Pool<T> {
 
     private static final int LOCAL_MAX = Numbers.POOL_LOCAL_MAX;
     private static final int BATCH     = Numbers.POOL_BATCH;
@@ -133,6 +133,18 @@ public final class ObjectPool<T extends ObjectPool.Pooled> {
     public long getNewAllocs()    { return newAllocs.sum();    }
     public long getDiscardCount() { return discardCount.sum(); }
     public int  globalPoolSize()  { return global.size();      }
+
+    @Override
+    public PoolStats stats() {
+        return new PoolStats(
+            borrowCount.sum(),
+            localHitRate(),
+            globalHitRate(),
+            newAllocRate(),
+            discardCount.sum(),
+            global.size()
+        );
+    }
 
     public interface Pooled {
         void reset();

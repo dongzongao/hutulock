@@ -121,4 +121,16 @@ public final class ZNodePathCache {
         long total = hits.sum() + misses.sum() + bypasses.sum();
         return total == 0 ? 0.0 : (double) hits.sum() / total;
     }
+
+    /** 返回当前缓存的运行时统计快照。 */
+    public CacheStats stats() {
+        return new CacheStats(
+            cache.size(),
+            hitRate(),
+            hits.sum(),
+            misses.sum(),
+            bypasses.sum(),
+            evictions.sum()
+        );
+    }
 }
