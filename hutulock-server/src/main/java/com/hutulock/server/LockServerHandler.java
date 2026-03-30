@@ -75,13 +75,6 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
     public LockServerHandler(DefaultLockManager lockManager,
                               SessionTracker sessionTracker,
                               RaftNode raftNode,
-                              ServerProperties props) {
-        this(lockManager, sessionTracker, raftNode, null, props);
-    }
-
-    public LockServerHandler(DefaultLockManager lockManager,
-                              SessionTracker sessionTracker,
-                              RaftNode raftNode,
                               DefaultZNodeTree zNodeTree,
                               ServerProperties props) {
         this.lockManager         = lockManager;
@@ -162,30 +155,29 @@ public class LockServerHandler extends SimpleChannelInboundHandler<String> {
     // ==================== 读操作（本地处理） ====================
 
     private void handleRecheck(ChannelHandlerContext ctx, Message msg) {
-        // 验证 sessionId 归属：消息中的 sessionId 必须与当前连接一致
-        String connectedSessionId = ctx.channel().attr(SESSION_ID_KEY).get();
-        String requestedSessionId = msg.arg(2);
-        if (connectedSessionId == null || !connectedSessionId.equals(requestedSessionId)) {
-            log.warn("RECHECK sessionId mismatch: connected={}, requested={}, addr={}",
-                connectedSessionId, requestedSessionId, ctx.channel().remoteAddress());
-            ctx.writeAndFlush(Message.of(CommandType.ERROR, "session mismatch").serialize() + "\n");
-            return;
-        }
+        if (!validateSession(ctx, msg.arg(2))) return;
         lockManager.recheckLock(msg.arg(0), msg.arg(1), msg.arg(2));
     }
 
     private void handleRenew(ChannelHandlerContext ctx, Message msg) {
-        // 验证 sessionId 归属
-        String connectedSessionId = ctx.channel().attr(SESSION_ID_KEY).get();
-        String requestedSessionId = msg.arg(1);
-        if (connectedSessionId == null || !connectedSessionId.equals(requestedSessionId)) {
-            log.warn("RENEW sessionId mismatch: connected={}, requested={}, addr={}",
-                connectedSessionId, requestedSessionId, ctx.channel().remoteAddress());
-            ctx.writeAndFlush(Message.of(CommandType.ERROR, "session mismatch").serialize() + "\n");
-            return;
-        }
+        if (!validateSession(ctx, msg.arg(1))) return;
         lockManager.renew(msg.arg(0), msg.arg(1));
         ctx.writeAndFlush(Message.of(CommandType.RENEWED, msg.arg(0)).serialize() + "\n");
+    }
+
+    /**
+     * 校验消息中的 sessionId 与当前连接绑定的 sessionId 是否一致。
+     * 不一致时直接写 ERROR 响应并返回 false。
+     */
+    private boolean validateSession(ChannelHandlerContext ctx, String requestedSessionId) {
+        String connectedSessionId = ctx.channel().attr(SESSION_ID_KEY).get();
+        if (connectedSessionId == null || !connectedSessionId.equals(requestedSessionId)) {
+            log.warn("SessionId mismatch: connected={}, requested={}, addr={}",
+                connectedSessionId, requestedSessionId, ctx.channel().remoteAddress());
+            ctx.writeAndFlush(Message.of(CommandType.ERROR, "session mismatch").serialize() + "\n");
+            return false;
+        }
+        return true;
     }
 
     // ==================== Raft propose with retry ====================

@@ -24,21 +24,13 @@ import com.hutulock.server.ioc.ServerBeanFactory;
 import com.hutulock.server.raft.RaftNode;
 import com.hutulock.server.security.SecurityContext;
 import com.hutulock.server.security.SecurityChannelHandler;
-import com.hutulock.server.security.TlsContextFactory;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-import io.netty.handler.codec.LineBasedFrameDecoder;
-import io.netty.handler.codec.string.StringDecoder;
-import io.netty.handler.codec.string.StringEncoder;
-import io.netty.handler.ssl.SslContext;
-import io.netty.util.CharsetUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -62,7 +54,6 @@ public class HutuLockServer {
     private final String             nodeId;
     private final int                clientPort;
     private final ApplicationContext ctx;
-    private SslContext               sslContext;
 
     /**
      * 构造服务端：向 IoC 容器注册所有 Bean，不触发实例化。
@@ -106,50 +97,31 @@ public class HutuLockServer {
      * @throws Exception 启动失败
      */
     public void start() throws Exception {
-        // 容器启动（MetricsHttpServer、RaftNode、SessionManager 等按顺序 start）
         ctx.start();
 
         ServerProperties props = ctx.getBean(ServerProperties.class);
+        NettyServerConfig nettyConfig = NettyServerConfig.from(props);
 
-        // 初始化 TLS（如果启用）
-        if (props.tlsEnabled) {
-            try {
-                sslContext = (props.tlsSelfSigned || props.tlsCertFile == null)
-                    ? TlsContextFactory.serverContextSelfSigned()
-                    : TlsContextFactory.serverContext(new File(props.tlsCertFile), new File(props.tlsKeyFile));
-                log.info("TLS enabled, selfSigned={}", props.tlsSelfSigned || props.tlsCertFile == null);
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to initialize TLS context", e);
-            }
-        }
+        ChannelPipelineFactory pipelineFactory = new ChannelPipelineFactory(
+            nettyConfig,
+            new SecurityChannelHandler(ctx.getBean(SecurityContext.class)),
+            ctx.getBean(LockServerHandler.class)
+        );
 
-        SecurityContext          secCtx          = ctx.getBean(SecurityContext.class);
-        SecurityChannelHandler   securityHandler = new SecurityChannelHandler(secCtx);
-        LockServerHandler        handler         = ctx.getBean(LockServerHandler.class);
+        bind(nettyConfig, pipelineFactory, props);
+    }
 
-        EventLoopGroup boss   = new NioEventLoopGroup(1);
-        EventLoopGroup worker = new NioEventLoopGroup();
-
+    private void bind(NettyServerConfig cfg, ChannelPipelineFactory pipeline,
+                      ServerProperties props) throws InterruptedException {
+        EventLoopGroup boss   = new NioEventLoopGroup(cfg.bossThreads);
+        EventLoopGroup worker = new NioEventLoopGroup(cfg.workerThreads);
         try {
             ChannelFuture future = new ServerBootstrap()
                 .group(boss, worker)
                 .channel(NioServerSocketChannel.class)
-                .option(ChannelOption.SO_BACKLOG, props.soBacklog)
+                .option(ChannelOption.SO_BACKLOG, cfg.soBacklog)
                 .childOption(ChannelOption.SO_KEEPALIVE, true)
-                .childHandler(new ChannelInitializer<SocketChannel>() {
-                    @Override
-                    protected void initChannel(SocketChannel ch) {
-                        ChannelPipeline p = ch.pipeline();
-                        if (sslContext != null) {
-                            p.addLast(sslContext.newHandler(ch.alloc()));
-                        }
-                        p.addLast(new LineBasedFrameDecoder(props.maxFrameLength))
-                         .addLast(new StringDecoder(CharsetUtil.UTF_8))
-                         .addLast(new StringEncoder(CharsetUtil.UTF_8))
-                         .addLast(securityHandler)
-                         .addLast(handler);
-                    }
-                })
+                .childHandler(pipeline)
                 .bind(clientPort).sync();
 
             log.info("HutuLockServer [{}] started — clientPort={}, tls={}, security={}, metricsPort={}",
@@ -158,17 +130,19 @@ public class HutuLockServer {
 
             future.channel().closeFuture().sync();
         } finally {
-            // 先等待 Netty 线程组完全停止，再关闭业务 Bean
-            // 避免 Bean shutdown 时仍有 Netty 线程在调用业务方法
-            try {
-                boss.shutdownGracefully(0, 3, TimeUnit.SECONDS).sync();
-                worker.shutdownGracefully(0, 3, TimeUnit.SECONDS).sync();
-            } catch (InterruptedException e) {
-                boss.shutdownNow();
-                worker.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
+            shutdownNetty(boss, worker);
             ctx.close();
+        }
+    }
+
+    private void shutdownNetty(EventLoopGroup boss, EventLoopGroup worker) {
+        try {
+            boss.shutdownGracefully(0, 3, TimeUnit.SECONDS).sync();
+            worker.shutdownGracefully(0, 3, TimeUnit.SECONDS).sync();
+        } catch (InterruptedException e) {
+            boss.shutdownNow();
+            worker.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 
