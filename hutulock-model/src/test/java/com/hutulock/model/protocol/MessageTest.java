@@ -60,8 +60,7 @@ class MessageTest {
 
     @Test
     void missingArgThrows() {
-        Message msg = Message.parse("LOCK order-lock");
-        assertThrows(HutuLockException.class, () -> msg.arg(1));
+        assertThrows(HutuLockException.class, () -> Message.parse("LOCK order-lock"));
     }
 
     @Test

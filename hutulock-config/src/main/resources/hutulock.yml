@@ -42,24 +42,27 @@ hutulock:
       # Token 有效期（小时），默认 8 小时
       tokenTtlHours: 8
 
-  # 安全配置
-  security:
-    # 是否启用认证和授权（false = 开发模式，允许所有连接）
-    enabled: false
-    tls:
-      # 是否启用 TLS 加密传输
+    # 安全配置（推荐放在 server.security，仍兼容旧路径）
+    security:
+      # 是否启用认证和授权（false = 开发模式，允许所有连接）
       enabled: false
-      # PEM 格式证书文件路径（生产环境必须配置）
-      certFile: ""
-      # PEM 格式私钥文件路径（生产环境必须配置）
-      keyFile: ""
-      # 是否使用自签名证书（仅开发/测试，enabled=true 且未配置证书时生效）
-      selfSigned: false
-    rateLimit:
-      # 每个客户端每秒最大请求数
-      qps: 100
-      # 突发容量（令牌桶容量）
-      burst: 200
+      tls:
+        # 是否启用 TLS 加密传输
+        enabled: false
+        # PEM 格式证书文件路径（生产环境必须配置）
+        certFile: ""
+        # PEM 格式私钥文件路径（生产环境必须配置）
+        keyFile: ""
+        # 是否使用自签名证书（仅开发/测试，enabled=true 且未配置证书时生效）
+        selfSigned: false
+      rateLimit:
+        # 每个客户端每秒最大请求数
+        qps: 100
+        # 突发容量（令牌桶容量）
+        burst: 200
+
+  # 兼容旧版：若仍在 hutulock.security 下配置亦可被读取
+  security: {}
 
   client:
     # 连接超时（毫秒）

@@ -171,8 +171,11 @@ public class YamlConfigProvider implements ConfigProvider {
             if (ttl > 0) b.adminTokenTtl(ttl * 3600_000L);
         }
 
-        // 安全
+        // 安全（优先 server.security，兼容 legacy 顶层 security）
         Map<String, Object> security = getMap(server, "security");
+        if (security == null) {
+            security = getMap(root, "security");
+        }
         if (security != null) {
             b.securityEnabled(getBool(security, "enabled", false));
             Map<String, Object> tls = getMap(security, "tls");

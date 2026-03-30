@@ -22,7 +22,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-JAR="${PROJECT_DIR}/hutulock-server/target/hutulock-server-1.0.0.jar"
+JAR="${PROJECT_DIR}/hutulock-server/target/hutulock-server-1.0.1-SNAPSHOT.jar"
 LOG_DIR="${PROJECT_DIR}/logs"
 PID_DIR="${PROJECT_DIR}/run"
 
