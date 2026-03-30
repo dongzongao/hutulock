@@ -96,18 +96,34 @@ public final class MemoryManager implements Lifecycle {
     /**
      * 内存管理器运行时快照（不可变值对象）。
      */
-    public record Stats(
-        int    pathCacheSize,
-        double pathCacheHitRate,
-        long   pathCacheBypasses,
-        long   pathCacheEvictions,
-        long   tokenBorrowCount,
-        double tokenLocalHitRate,
-        double tokenGlobalHitRate,
-        double tokenNewAllocRate,
-        long   tokenDiscardCount,
-        int    tokenGlobalPoolSize
-    ) {
+    public static final class Stats {
+        public final int    pathCacheSize;
+        public final double pathCacheHitRate;
+        public final long   pathCacheBypasses;
+        public final long   pathCacheEvictions;
+        public final long   tokenBorrowCount;
+        public final double tokenLocalHitRate;
+        public final double tokenGlobalHitRate;
+        public final double tokenNewAllocRate;
+        public final long   tokenDiscardCount;
+        public final int    tokenGlobalPoolSize;
+
+        Stats(int pathCacheSize, double pathCacheHitRate, long pathCacheBypasses,
+              long pathCacheEvictions, long tokenBorrowCount, double tokenLocalHitRate,
+              double tokenGlobalHitRate, double tokenNewAllocRate,
+              long tokenDiscardCount, int tokenGlobalPoolSize) {
+            this.pathCacheSize      = pathCacheSize;
+            this.pathCacheHitRate   = pathCacheHitRate;
+            this.pathCacheBypasses  = pathCacheBypasses;
+            this.pathCacheEvictions = pathCacheEvictions;
+            this.tokenBorrowCount   = tokenBorrowCount;
+            this.tokenLocalHitRate  = tokenLocalHitRate;
+            this.tokenGlobalHitRate = tokenGlobalHitRate;
+            this.tokenNewAllocRate  = tokenNewAllocRate;
+            this.tokenDiscardCount  = tokenDiscardCount;
+            this.tokenGlobalPoolSize= tokenGlobalPoolSize;
+        }
+
         @Override
         public String toString() {
             return String.format(
