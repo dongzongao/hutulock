@@ -37,6 +37,12 @@ import org.slf4j.LoggerFactory;
  *   优化后：路径命中缓存时 0 次 new，LockToken 命中池时 0 次 new
  * </pre>
  *
+ * <p>容量配置（通过构造器注入，默认值来自 {@link Numbers}）：
+ * <pre>
+ *   new MemoryManager()                          // 使用默认容量
+ *   new MemoryManager(lockTokenPoolSize)         // 自定义 LockToken 池容量
+ * </pre>
+ *
  * @author HutuLock Authors
  * @since 1.0.0
  */
@@ -44,33 +50,85 @@ public final class MemoryManager implements Lifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(MemoryManager.class);
 
-    /** LockToken 对象池容量（建议 = 预期并发锁数 × 2） */
-    private static final int LOCK_TOKEN_POOL_SIZE = Numbers.LOCK_TOKEN_POOL_SIZE;
-
+    private final int                         lockTokenPoolSize;
     private final ZNodePathCache              pathCache;
     private final ObjectPool<PooledLockToken> lockTokenPool;
 
+    /** 使用默认容量构造。 */
     public MemoryManager() {
-        this.pathCache     = new ZNodePathCache();
-        this.lockTokenPool = new ObjectPool<>(LOCK_TOKEN_POOL_SIZE, PooledLockToken::new);
+        this(Numbers.LOCK_TOKEN_POOL_SIZE);
     }
 
-    public ZNodePathCache              getPathCache()      { return pathCache;     }
-    public ObjectPool<PooledLockToken> getLockTokenPool()  { return lockTokenPool; }
+    /**
+     * 使用自定义 LockToken 池容量构造。
+     *
+     * @param lockTokenPoolSize LockToken 对象池容量（建议 = 预期并发锁数 × 2）
+     */
+    public MemoryManager(int lockTokenPoolSize) {
+        this.lockTokenPoolSize = lockTokenPoolSize;
+        this.pathCache         = new ZNodePathCache();
+        this.lockTokenPool     = new ObjectPool<>(lockTokenPoolSize, PooledLockToken::new);
+    }
+
+    public ZNodePathCache              getPathCache()     { return pathCache;     }
+    public ObjectPool<PooledLockToken> getLockTokenPool() { return lockTokenPool; }
+
+    // ==================== 实时快照 ====================
+
+    /**
+     * 返回当前内存管理器的运行时快照，可用于指标上报或健康检查。
+     */
+    public Stats snapshot() {
+        return new Stats(
+            pathCache.size(),
+            pathCache.hitRate(),
+            pathCache.getBypassCount(),
+            pathCache.getEvictCount(),
+            lockTokenPool.getBorrowCount(),
+            lockTokenPool.localHitRate(),
+            lockTokenPool.globalHitRate(),
+            lockTokenPool.newAllocRate(),
+            lockTokenPool.getDiscardCount(),
+            lockTokenPool.globalPoolSize()
+        );
+    }
+
+    /**
+     * 内存管理器运行时快照（不可变值对象）。
+     */
+    public record Stats(
+        int    pathCacheSize,
+        double pathCacheHitRate,
+        long   pathCacheBypasses,
+        long   pathCacheEvictions,
+        long   tokenBorrowCount,
+        double tokenLocalHitRate,
+        double tokenGlobalHitRate,
+        double tokenNewAllocRate,
+        long   tokenDiscardCount,
+        int    tokenGlobalPoolSize
+    ) {
+        @Override
+        public String toString() {
+            return String.format(
+                "MemoryStats{pathCache=[size=%d, hitRate=%.2f%%, bypasses=%d, evictions=%d], " +
+                "lockToken=[borrows=%d, localHit=%.2f%%, globalHit=%.2f%%, newAlloc=%.2f%%, discards=%d, poolSize=%d]}",
+                pathCacheSize, pathCacheHitRate * 100, pathCacheBypasses, pathCacheEvictions,
+                tokenBorrowCount, tokenLocalHitRate * 100, tokenGlobalHitRate * 100,
+                tokenNewAllocRate * 100, tokenDiscardCount, tokenGlobalPoolSize);
+        }
+    }
+
+    // ==================== 生命周期 ====================
 
     @Override
     public void start() {
-        log.info("MemoryManager started — pathCache.maxSize=8192, lockTokenPool.capacity={}",
-            LOCK_TOKEN_POOL_SIZE);
+        log.info("MemoryManager started — pathCache.maxSize={}, lockTokenPool.capacity={}",
+            Numbers.PATH_CACHE_MAX_SIZE, lockTokenPoolSize);
     }
 
     @Override
     public void shutdown() {
-        log.info("MemoryManager stats — pathCache.size={}, lockToken.localHitRate={}%, globalHitRate={}%, newAllocRate={}%, borrows={}",
-            pathCache.size(),
-            String.format("%.2f", lockTokenPool.localHitRate()  * 100),
-            String.format("%.2f", lockTokenPool.globalHitRate() * 100),
-            String.format("%.2f", lockTokenPool.newAllocRate()  * 100),
-            lockTokenPool.getBorrowCount());
+        log.info("MemoryManager shutdown — {}", snapshot());
     }
 }

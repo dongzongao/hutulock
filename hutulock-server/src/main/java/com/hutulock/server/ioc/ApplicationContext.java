@@ -27,21 +27,9 @@ import java.util.*;
  * <ol>
  *   <li>Bean 注册 — 通过 {@link BeanDefinition} 描述组件及其工厂方法</li>
  *   <li>延迟实例化 — 首次 {@link #getBean} 时调用工厂方法，结果缓存为单例</li>
+ *   <li>循环依赖检测 — 实例化过程中检测循环引用，快速失败</li>
  *   <li>生命周期管理 — {@link #start()} 按注册顺序启动，{@link #close()} 按逆序关闭</li>
  * </ol>
- *
- * <p>使用示例：
- * <pre>{@code
- *   ApplicationContext ctx = new ApplicationContext();
- *   ctx.register(BeanDefinition.of("metrics", MetricsCollector.class, () -> new PrometheusMetricsCollector("node1")));
- *   ctx.register(BeanDefinition.of("storage", ZNodeStorage.class,
- *       () -> new DefaultZNodeTree(ctx.getBean(WatcherRegistry.class), ctx.getBean(MetricsCollector.class), EventBus.noop())));
- *   ctx.start();
- *   // 使用
- *   ZNodeStorage storage = ctx.getBean(ZNodeStorage.class);
- *   // 关闭
- *   ctx.close();
- * }</pre>
  *
  * @author HutuLock Authors
  * @since 1.0.0
@@ -51,19 +39,23 @@ public class ApplicationContext implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(ApplicationContext.class);
 
     /** 按注册顺序保存 Bean 名称（用于生命周期顺序控制）*/
-    private final List<String>                     registrationOrder = new ArrayList<>();
+    private final List<String>                   registrationOrder = new ArrayList<>();
     /** name → BeanDefinition */
-    private final Map<String, BeanDefinition<?>>   definitions       = new LinkedHashMap<>();
-    /** name → 已实例化的单例 */
-    private final Map<String, Object>              singletons        = new LinkedHashMap<>();
+    private final Map<String, BeanDefinition<?>> definitions       = new LinkedHashMap<>();
+    /** name → 已实例化的单例（null 值用 NULL_SENTINEL 占位）*/
+    private final Map<String, Object>            singletons        = new LinkedHashMap<>();
     /** type → name（用于按类型查找，取最后注册的同类型 Bean）*/
-    private final Map<Class<?>, String>            typeIndex         = new LinkedHashMap<>();
+    private final Map<Class<?>, String>          typeIndex         = new LinkedHashMap<>();
+    /** 正在实例化中的 Bean 名称（用于循环依赖检测）*/
+    private final Set<String>                    creating          = new LinkedHashSet<>();
+
+    /** null Bean 的占位符，避免 singletons.containsKey 与 null 值混淆 */
+    private static final Object NULL_SENTINEL = new Object();
 
     // ==================== 注册 ====================
 
     /**
-     * 注册 Bean 定义。
-     * 若同名 Bean 已存在则覆盖（支持测试替换）。
+     * 注册 Bean 定义。若同名 Bean 已存在则覆盖（支持测试替换）。
      *
      * @param definition Bean 定义
      * @param <T>        Bean 类型
@@ -76,7 +68,20 @@ public class ApplicationContext implements AutoCloseable {
         }
         definitions.put(name, definition);
         typeIndex.put(definition.getType(), name);
+        // 覆盖注册时清除已缓存的旧实例
+        singletons.remove(name);
         log.debug("Registered bean: name={}, type={}", name, definition.getType().getSimpleName());
+        return this;
+    }
+
+    /**
+     * 批量注册 Bean 模块。
+     *
+     * @param module Bean 模块
+     * @return this（链式调用）
+     */
+    public ApplicationContext install(BeanModule module) {
+        module.register(this);
         return this;
     }
 
@@ -87,22 +92,38 @@ public class ApplicationContext implements AutoCloseable {
      *
      * @param name Bean 名称
      * @param <T>  Bean 类型
-     * @return Bean 实例
+     * @return Bean 实例，可能为 null（工厂方法返回 null 时）
      * @throws IllegalArgumentException 若 Bean 未注册
+     * @throws IllegalStateException    若检测到循环依赖
      */
     @SuppressWarnings("unchecked")
     public <T> T getBean(String name) {
-        if (singletons.containsKey(name)) {
-            return (T) singletons.get(name);
+        Object cached = singletons.get(name);
+        if (cached != null) {
+            return cached == NULL_SENTINEL ? null : (T) cached;
         }
+
         BeanDefinition<?> def = definitions.get(name);
         if (def == null) {
             throw new IllegalArgumentException("No bean registered with name: " + name);
         }
-        T instance = (T) def.getFactory().get();
-        singletons.put(name, instance);
-        log.debug("Instantiated bean: name={}", name);
-        return instance;
+
+        // 循环依赖检测
+        if (creating.contains(name)) {
+            throw new IllegalStateException(
+                "Circular dependency detected while creating bean '" + name
+                + "'. Creation chain: " + creating);
+        }
+
+        creating.add(name);
+        try {
+            T instance = (T) def.getFactory().get();
+            singletons.put(name, instance == null ? NULL_SENTINEL : instance);
+            log.debug("Instantiated bean: name={}", name);
+            return instance;
+        } finally {
+            creating.remove(name);
+        }
     }
 
     /**
@@ -110,7 +131,7 @@ public class ApplicationContext implements AutoCloseable {
      *
      * @param type Bean 类型
      * @param <T>  Bean 类型
-     * @return Bean 实例
+     * @return Bean 实例，可能为 null
      * @throws IllegalArgumentException 若该类型未注册
      */
     public <T> T getBean(Class<T> type) {
@@ -119,6 +140,16 @@ public class ApplicationContext implements AutoCloseable {
             throw new IllegalArgumentException("No bean registered for type: " + type.getName());
         }
         return getBean(name);
+    }
+
+    /**
+     * 按类型获取 Bean，若不存在返回 defaultValue。
+     */
+    public <T> T getBeanOrDefault(Class<T> type, T defaultValue) {
+        String name = typeIndex.get(type);
+        if (name == null) return defaultValue;
+        T bean = getBean(name);
+        return bean != null ? bean : defaultValue;
     }
 
     /**
@@ -132,7 +163,7 @@ public class ApplicationContext implements AutoCloseable {
 
     /**
      * 按注册顺序启动所有实现了 {@link Lifecycle} 的 Bean。
-     * 若任意 Bean 启动失败，回滚已启动的 Bean（逆序 shutdown），保证不留下半启动状态。
+     * 若任意 Bean 启动失败，回滚已启动的 Bean（逆序 shutdown）。
      *
      * @throws Exception 任意 Bean 启动失败时抛出
      */
@@ -150,7 +181,6 @@ public class ApplicationContext implements AutoCloseable {
             }
         } catch (Exception e) {
             log.error("ApplicationContext start failed, rolling back {} started beans", started.size());
-            // 逆序关闭已启动的 Bean，避免半启动状态
             List<String> toRollback = new ArrayList<>(started);
             Collections.reverse(toRollback);
             for (String name : toRollback) {

@@ -85,6 +85,11 @@ public final class ServerProperties {
     /** Admin token 有效期（毫秒），默认 8 小时 */
     public final long    adminTokenTtlMs;
 
+    // ---- 内存参数 ----
+
+    /** LockToken 对象池容量，默认 1024（建议 = 预期并发锁数 × 2） */
+    public final int lockTokenPoolSize;
+
     // ---- 安全参数 ----
 
     /** 是否启用安全认证，默认 false（开发模式） */
@@ -128,6 +133,7 @@ public final class ServerProperties {
         this.tlsSelfSigned         = b.tlsSelfSigned;
         this.rateLimitQps          = b.rateLimitQps;
         this.rateLimitBurst        = b.rateLimitBurst;
+        this.lockTokenPoolSize     = b.lockTokenPoolSize;
     }
 
     /** 使用全部默认值创建配置。 */
@@ -165,6 +171,7 @@ public final class ServerProperties {
         private boolean tlsSelfSigned          = false;
         private double  rateLimitQps           = 100.0;
         private long    rateLimitBurst         = 200;
+        private int     lockTokenPoolSize      = com.hutulock.model.util.Numbers.LOCK_TOKEN_POOL_SIZE;
 
         public Builder electionTimeout(long minMs, long maxMs) {
             this.electionTimeoutMinMs = minMs;
@@ -196,6 +203,7 @@ public final class ServerProperties {
             rateLimitBurst = burst;
             return this;
         }
+        public Builder lockTokenPoolSize(int n) { lockTokenPoolSize = n; return this; }
 
         public ServerProperties build() {
             validate();

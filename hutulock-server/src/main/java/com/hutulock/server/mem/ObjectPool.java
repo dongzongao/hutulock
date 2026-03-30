@@ -25,6 +25,20 @@ import com.hutulock.model.util.Numbers;
 /**
  * Two-level object pool (Thread-Local local pool + global shared pool).
  *
+ * <p>借出路径（fast → slow → new）：
+ * <ol>
+ *   <li>Thread-Local 本地队列（无锁，最快）</li>
+ *   <li>全局 {@link ArrayBlockingQueue}（CAS，较快）</li>
+ *   <li>工厂方法新建（最慢，计入 {@link #newAllocRate()}）</li>
+ * </ol>
+ *
+ * <p>归还路径：
+ * <ol>
+ *   <li>本地队列未满 → 直接入队</li>
+ *   <li>本地队列已满 → 批量转移 {@link Numbers#POOL_BATCH} 个到全局池，再入本地队列</li>
+ *   <li>全局池也满 → 对象被丢弃，计入 {@link #getDiscardCount()}</li>
+ * </ol>
+ *
  * @param <T> pooled object type, must implement {@link Pooled}
  */
 public final class ObjectPool<T extends ObjectPool.Pooled> {
@@ -39,15 +53,18 @@ public final class ObjectPool<T extends ObjectPool.Pooled> {
     private final ThreadLocal<ArrayDeque<T>> local =
         ThreadLocal.withInitial(() -> new ArrayDeque<>(LOCAL_MAX));
 
-    private final LongAdder borrowCount = new LongAdder();
-    private final LongAdder localHits   = new LongAdder();
-    private final LongAdder globalHits  = new LongAdder();
-    private final LongAdder newAllocs   = new LongAdder();
+    private final LongAdder borrowCount  = new LongAdder();
+    private final LongAdder localHits    = new LongAdder();
+    private final LongAdder globalHits   = new LongAdder();
+    private final LongAdder newAllocs    = new LongAdder();
+    /** 全局池满时被丢弃的对象数（之前静默丢弃，现在可观测） */
+    private final LongAdder discardCount = new LongAdder();
 
     public ObjectPool(int globalCapacity, Supplier<T> factory) {
         this.globalCapacity = globalCapacity;
         this.global  = new ArrayBlockingQueue<>(Math.max(1, globalCapacity));
         this.factory = factory;
+        // 预热：填充一半容量，减少冷启动时的 new alloc
         for (int i = 0; i < globalCapacity / 2; i++) {
             global.offer(factory.get());
         }
@@ -82,12 +99,18 @@ public final class ObjectPool<T extends ObjectPool.Pooled> {
             return;
         }
 
+        // 本地池满：批量转移到全局池
         for (int i = 0; i < BATCH && !localPool.isEmpty(); i++) {
             T item = localPool.poll();
-            if (!global.offer(item)) break;
+            if (!global.offer(item)) {
+                discardCount.increment(); // 全局池也满，计入丢弃
+                break;
+            }
         }
         localPool.offer(obj);
     }
+
+    // ==================== 统计 ====================
 
     public double localHitRate() {
         long total = borrowCount.sum();
@@ -104,11 +127,12 @@ public final class ObjectPool<T extends ObjectPool.Pooled> {
         return total == 0 ? 0.0 : (double) newAllocs.sum() / total;
     }
 
-    public long getBorrowCount() { return borrowCount.sum(); }
-    public long getLocalHits()   { return localHits.sum();   }
-    public long getGlobalHits()  { return globalHits.sum();  }
-    public long getNewAllocs()   { return newAllocs.sum();   }
-    public int  globalPoolSize() { return global.size();     }
+    public long getBorrowCount()  { return borrowCount.sum();  }
+    public long getLocalHits()    { return localHits.sum();    }
+    public long getGlobalHits()   { return globalHits.sum();   }
+    public long getNewAllocs()    { return newAllocs.sum();    }
+    public long getDiscardCount() { return discardCount.sum(); }
+    public int  globalPoolSize()  { return global.size();      }
 
     public interface Pooled {
         void reset();
