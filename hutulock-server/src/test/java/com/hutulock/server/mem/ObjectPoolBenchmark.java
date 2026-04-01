@@ -18,16 +18,18 @@ package com.hutulock.server.mem;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayDeque;
+import java.util.PriorityQueue;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 对象池底层数据结构基准测试
  *
- * 对比三种实现在对象池场景（borrow/release）下的吞吐量和延迟：
+ * 对比四种实现在对象池场景（borrow/release）下的吞吐量和延迟：
  *
- *   SinglyLinkedPool  — 手写单向链表（无锁头节点 CAS）
- *   DoublyLinkedPool  — ArrayDeque（JDK 双向链表，非线程安全，加 synchronized）
+ *   SinglyLinkedPool  — 手写单向链表（无锁头节点 CAS，Treiber Stack）
+ *   DoublyLinkedPool  — 手写双向链表（head/tail 指针，synchronized）
+ *   BinaryHeapPool    — 二叉堆（PriorityQueue，O(log n)，synchronized）
  *   BlockingQueuePool — ArrayBlockingQueue（当前实现，线程安全）
  *
  * 测试维度：
@@ -106,36 +108,107 @@ class ObjectPoolBenchmark {
         }
     }
 
-    // ==================== 双向链表池（ArrayDeque + synchronized）====================
+    // ==================== 双向链表池（手写 DLL + synchronized）====================
 
     /**
-     * 基于 ArrayDeque（循环数组双端队列）的对象池。
+     * 基于手写双向链表的对象池。
      *
-     * <p>ArrayDeque 内部是循环数组，不是真正的链表，但 JDK 文档将其归类为双端队列。
-     * 这里用它代表"双向可访问"的队列结构，与单向链表对比。
-     * 加 synchronized 保证线程安全。
+     * <p>每个节点持有 prev/next 两个指针，borrow 从 head 摘取，
+     * release 追加到 tail，O(1) 操作。加 synchronized 保证线程安全。
      */
     static final class DoublyLinkedPool<T extends ObjectPool.Pooled> {
 
-        private final ArrayDeque<T>                  deque;
-        private final java.util.function.Supplier<T> factory;
+        private static final class Node<T> {
+            T       item;
+            Node<T> prev;
+            Node<T> next;
+            Node(T item) { this.item = item; }
+        }
+
+        private Node<T>                              head;     // 哨兵头
+        private Node<T>                              tail;     // 哨兵尾
+        private int                                  size;
         private final int                            capacity;
+        private final java.util.function.Supplier<T> factory;
 
         DoublyLinkedPool(int capacity, java.util.function.Supplier<T> factory) {
             this.capacity = capacity;
             this.factory  = factory;
-            this.deque    = new ArrayDeque<>(capacity);
-            for (int i = 0; i < capacity / 2; i++) deque.offer(factory.get());
+            // 初始化哨兵节点
+            head = new Node<>(null);
+            tail = new Node<>(null);
+            head.next = tail;
+            tail.prev = head;
+            // 预热
+            for (int i = 0; i < capacity / 2; i++) linkTail(factory.get());
+        }
+
+        /** 在 tail 哨兵前插入节点（O(1)）*/
+        private void linkTail(T item) {
+            Node<T> node = new Node<>(item);
+            node.prev       = tail.prev;
+            node.next       = tail;
+            tail.prev.next  = node;
+            tail.prev       = node;
+            size++;
+        }
+
+        /** 摘除 head 哨兵后第一个节点（O(1)）*/
+        private T unlinkHead() {
+            if (head.next == tail) return null;
+            Node<T> node = head.next;
+            head.next       = node.next;
+            node.next.prev  = head;
+            node.prev       = null;
+            node.next       = null;
+            size--;
+            return node.item;
         }
 
         synchronized T borrow() {
-            T item = deque.poll();
+            T item = unlinkHead();
             return item != null ? item : factory.get();
         }
 
         synchronized void release(T item) {
             item.reset();
-            if (deque.size() < capacity) deque.offer(item);
+            if (size < capacity) linkTail(item);
+        }
+    }
+
+    // ==================== 二叉堆池（PriorityQueue + synchronized）====================
+
+    /**
+     * 基于二叉堆（最小堆）的对象池。
+     *
+     * <p>用对象的 identityHashCode 作为优先级键，borrow/release 均为 O(log n)。
+     * 主要用于对比：堆的 sift-up/sift-down 开销 vs 链表的 O(1) 指针操作。
+     */
+    static final class BinaryHeapPool<T extends ObjectPool.Pooled> {
+
+        private final PriorityQueue<T>               heap;
+        private final int                            capacity;
+        private final java.util.function.Supplier<T> factory;
+
+        @SuppressWarnings("unchecked")
+        BinaryHeapPool(int capacity, java.util.function.Supplier<T> factory) {
+            this.capacity = capacity;
+            this.factory  = factory;
+            // 用 identityHashCode 作为自然排序键（需要 Comparable 包装，这里直接用 comparator）
+            this.heap = new PriorityQueue<>(Math.max(1, capacity),
+                (a, b) -> Integer.compare(
+                    System.identityHashCode(a), System.identityHashCode(b)));
+            for (int i = 0; i < capacity / 2; i++) heap.offer(factory.get());
+        }
+
+        synchronized T borrow() {
+            T item = heap.poll();   // O(log n) sift-down
+            return item != null ? item : factory.get();
+        }
+
+        synchronized void release(T item) {
+            item.reset();
+            if (heap.size() < capacity) heap.offer(item); // O(log n) sift-up
         }
     }
 
@@ -154,6 +227,13 @@ class ObjectPoolBenchmark {
     }
 
     static Pool<Item> wrapDoubly(DoublyLinkedPool<Item> p) {
+        return new Pool<Item>() {
+            public Item borrow()        { return p.borrow();  }
+            public void release(Item i) { p.release(i);       }
+        };
+    }
+
+    static Pool<Item> wrapHeap(BinaryHeapPool<Item> p) {
         return new Pool<Item>() {
             public Item borrow()        { return p.borrow();  }
             public void release(Item i) { p.release(i);       }
@@ -245,11 +325,14 @@ class ObjectPoolBenchmark {
             wrapSingly(new SinglyLinkedPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
         long doubly   = singleThreadThroughput(
             wrapDoubly(new DoublyLinkedPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
+        long heap     = singleThreadThroughput(
+            wrapHeap(new BinaryHeapPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
         long twoLevel = singleThreadThroughput(
             wrapBlocking(new ObjectPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
 
         System.out.printf("  SinglyLinked  (Treiber Stack CAS)  : %,12d ops/sec%n", singly);
-        System.out.printf("  DoublyLinked  (ArrayDeque+sync)    : %,12d ops/sec%n", doubly);
+        System.out.printf("  DoublyLinked  (DLL head/tail+sync) : %,12d ops/sec%n", doubly);
+        System.out.printf("  BinaryHeap    (PriorityQueue+sync) : %,12d ops/sec%n", heap);
         System.out.printf("  TwoLevel      (ThreadLocal+Global) : %,12d ops/sec  ← 当前实现%n", twoLevel);
     }
 
@@ -263,11 +346,14 @@ class ObjectPoolBenchmark {
             wrapSingly(new SinglyLinkedPool<>(POOL_CAP, Item::new)), THREADS, opsPerThread);
         long doubly   = multiThreadThroughput(
             wrapDoubly(new DoublyLinkedPool<>(POOL_CAP, Item::new)), THREADS, opsPerThread);
+        long heap     = multiThreadThroughput(
+            wrapHeap(new BinaryHeapPool<>(POOL_CAP, Item::new)), THREADS, opsPerThread);
         long twoLevel = multiThreadThroughput(
             wrapBlocking(new ObjectPool<>(POOL_CAP, Item::new)), THREADS, opsPerThread);
 
         System.out.printf("  SinglyLinked  (Treiber Stack CAS)  : %,12d ops/sec%n", singly);
-        System.out.printf("  DoublyLinked  (ArrayDeque+sync)    : %,12d ops/sec%n", doubly);
+        System.out.printf("  DoublyLinked  (DLL head/tail+sync) : %,12d ops/sec%n", doubly);
+        System.out.printf("  BinaryHeap    (PriorityQueue+sync) : %,12d ops/sec%n", heap);
         System.out.printf("  TwoLevel      (ThreadLocal+Global) : %,12d ops/sec  ← 当前实现%n", twoLevel);
     }
 
@@ -279,11 +365,14 @@ class ObjectPoolBenchmark {
             wrapSingly(new SinglyLinkedPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
         long doublyP99   = p99Latency(
             wrapDoubly(new DoublyLinkedPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
+        long heapP99     = p99Latency(
+            wrapHeap(new BinaryHeapPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
         long twoLevelP99 = p99Latency(
             wrapBlocking(new ObjectPool<>(POOL_CAP, Item::new)), MEASURE_OPS);
 
         System.out.printf("  SinglyLinked  (Treiber Stack CAS)  : %,8d ns%n", singlyP99);
-        System.out.printf("  DoublyLinked  (ArrayDeque+sync)    : %,8d ns%n", doublyP99);
+        System.out.printf("  DoublyLinked  (DLL head/tail+sync) : %,8d ns%n", doublyP99);
+        System.out.printf("  BinaryHeap    (PriorityQueue+sync) : %,8d ns%n", heapP99);
         System.out.printf("  TwoLevel      (ThreadLocal+Global) : %,8d ns  ← 当前实现%n", twoLevelP99);
     }
 }
