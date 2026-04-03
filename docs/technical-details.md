@@ -3,6 +3,7 @@
 ## 目录
 
 1. [分布式锁模型](#1-分布式锁模型)
+   - [锁升级完整链路图](#锁升级完整链路图)
 2. [Raft 共识算法](#2-raft-共识算法)
 3. [顺序节点公平锁](#3-顺序节点公平锁)
 4. [Session 会话机制](#4-session-会话机制)
@@ -64,6 +65,88 @@
   │                                  │ 4. 触发父节点 CHILDREN_CHANGED 事件
   │←── RELEASED order-lock ──────────│
 ```
+
+### 锁升级完整链路图
+
+从客户端发起 LOCK 到最终持锁，经过以下完整链路：
+
+```
+客户端                    Netty Pipeline              服务端核心                  Raft 集群
+   │                           │                          │                          │
+   │── LOCK lockName sid ──────→│                          │                          │
+   │                           │ SecurityChannelHandler   │                          │
+   │                           │  ① 认证（Token/HMAC）    │                          │
+   │                           │  ② 限流（TokenBucket）   │                          │
+   │                           │  ③ 授权（ACL）           │                          │
+   │                           │──────────────────────────→│                          │
+   │                           │                    LockServerHandler                │
+   │                           │                    ④ 解析 Message                  │
+   │                           │                    ⑤ 校验 Session                  │
+   │                           │                          │                          │
+   │                           │                    DefaultLockManager               │
+   │                           │                    ⑥ propose(LOCK cmd)             │
+   │                           │                          │── APPEND_REQ ───────────→│
+   │                           │                          │                   Follower 复制
+   │                           │                          │←── APPEND_RESP（多数派）──│
+   │                           │                          │                          │
+   │                           │                    RaftStateMachine                 │
+   │                           │                    ⑦ apply(LOCK cmd)               │
+   │                           │                          │                          │
+   │                           │                    DefaultZNodeTree                 │
+   │                           │                    ⑧ create EPHEMERAL_SEQ          │
+   │                           │                       /locks/{name}/seq-N           │
+   │                           │                          │                          │
+   │                           │                    ⑨ getChildren + sort            │
+   │                           │                          │                          │
+   │                           │              ┌───────────┴───────────┐             │
+   │                           │         seq-N 最小？                  │             │
+   │                           │              │ YES                   │ NO          │
+   │                           │              ↓                       ↓             │
+   │                           │         ⑩ 获锁成功              ⑩ 注册 Watcher    │
+   │                           │         发布 LockEvent           监听 seq-(N-1)    │
+   │                           │         ACQUIRED                                   │
+   │                           │              │                       │             │
+   │←── OK lockName seq-N ─────│              │         ┌─────────────┘             │
+   │                           │              │    等待 NODE_DELETED                 │
+   │                           │              │    WATCH_EVENT 推送                  │
+   │                           │              │         │                            │
+   │                           │              │    ⑪ RECHECK                        │
+   │                           │              │    重新检查序号                       │
+   │                           │              │         │                            │
+   │                           │              └─────────┘                           │
+   │                           │                        │                           │
+   │  客户端持锁期间                                      │                           │
+   │  ⑫ 看门狗每 9s 发 RENEW ──→│                        │                           │
+   │←── RENEWED ───────────────│                        │                           │
+   │                           │                        │                           │
+   │── UNLOCK seq-N sid ───────→│                        │                           │
+   │                           │                    ⑬ propose(UNLOCK cmd)           │
+   │                           │                          │── APPEND_REQ ───────────→│
+   │                           │                          │←── APPEND_RESP（多数派）──│
+   │                           │                    ⑭ apply：delete seq-N           │
+   │                           │                    ⑮ fire NODE_DELETED             │
+   │                           │                       → 通知 seq-(N+1) 等待者       │
+   │←── RELEASED lockName ─────│                        │                           │
+```
+
+**各步骤说明：**
+
+| 步骤 | 位置 | 说明 |
+|------|------|------|
+| ① 认证 | `SecurityChannelHandler` | Token 或 HMAC-SHA256 签名验证 |
+| ② 限流 | `RateLimitFilter` | 令牌桶，防止单客户端打爆服务端 |
+| ③ 授权 | `AclAuthorizer` | 检查客户端是否有该锁路径的操作权限 |
+| ④ 解析 | `LockServerHandler` | 文本行协议解析为 `Message` 对象 |
+| ⑤ 校验 | `LockServerHandler` | 验证 sessionId 存在且未过期 |
+| ⑥ propose | `DefaultLockManager` | 将 LOCK 命令提交给 Raft 状态机 |
+| ⑦ apply | `RaftStateMachine` | Raft 多数派确认后执行状态机 |
+| ⑧ 创建节点 | `DefaultZNodeTree` | 创建 `EPHEMERAL_SEQ` 顺序临时节点 |
+| ⑨ 排序判断 | `DefaultLockManager` | 获取所有子节点，按序号排序，判断是否最小 |
+| ⑩ 获锁/等待 | `DefaultLockManager` | 最小则获锁；否则注册 Watcher 监听前驱节点 |
+| ⑪ RECHECK | `LockServerHandler` | Watcher 触发后重新检查，可能再次等待 |
+| ⑫ 看门狗 | `LockContext`（客户端） | 每 `watchdogInterval` 发 RENEW，防止 TTL 过期 |
+| ⑬⑭ 释放 | `DefaultLockManager` | UNLOCK 同样走 Raft propose → apply |
+| ⑮ 通知 | `WatcherRegistry` | 删除节点后触发 `NODE_DELETED`，唤醒下一个等待者 |
 
 ### 公平性保证（避免羊群效应）
 
