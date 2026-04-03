@@ -1,0 +1,15 @@
+[package]
+name = "hutulock"
+version = "0.1.0"
+edition = "2021"
+description = "HutuLock distributed lock Rust client"
+license = "Apache-2.0"
+repository = "https://github.com/dongzongao/hutulock"
+keywords = ["distributed", "lock", "zookeeper"]
+
+[dependencies]
+tokio = { version = "1", features = ["net", "io-util", "time", "rt", "sync", "macros"] }
+thiserror = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
