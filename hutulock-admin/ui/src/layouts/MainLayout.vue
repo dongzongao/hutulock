@@ -25,7 +25,7 @@
       </nav>
 
       <div class="sidebar-footer">
-        <div class="version-tag">v1.0.1-SNAPSHOT</div>
+        <div class="version-tag">v1.0.2-SNAPSHOT</div>
       </div>
     </el-aside>
 

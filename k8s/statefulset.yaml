@@ -72,7 +72,7 @@ spec:
 
       containers:
         - name: hutulock-server
-          image: hutulock/server:1.0.1  # 替换为你的镜像仓库地址
+          image: hutulock/server:1.0.2  # 替换为你的镜像仓库地址
           imagePullPolicy: IfNotPresent
 
           # 从 init container 生成的文件读取环境变量

@@ -2,7 +2,7 @@
 # HutuLock Server Docker 镜像
 #
 # 构建：
-#   docker build -t hutulock/server:1.0.0 -f docker/Dockerfile .
+#   docker build -t hutulock/server:1.0.2 -f docker/Dockerfile .
 #
 # 运行（单节点）：
 #   docker run -d \
@@ -10,11 +10,11 @@
 #     -e NODE_ID=node1 \
 #     -e CLIENT_PORT=8881 \
 #     -e RAFT_PORT=9881 \
-#     hutulock/server:1.0.0
+#     hutulock/server:1.0.2
 # =============================================================================
 
 # ---- 构建阶段 ----
-FROM eclipse-temurin:11-jdk-alpine AS builder
+FROM eclipse-temurin:17-jdk-alpine AS builder
 
 WORKDIR /build
 
@@ -36,10 +36,10 @@ COPY . .
 RUN mvn clean package -DskipTests -q
 
 # ---- 运行阶段 ----
-FROM eclipse-temurin:11-jre-alpine
+FROM eclipse-temurin:17-jre-alpine
 
 LABEL maintainer="HutuLock Authors"
-LABEL version="1.0.0"
+LABEL version="1.0.2"
 LABEL description="HutuLock Distributed Lock Server"
 
 # 创建非 root 用户

@@ -9,7 +9,9 @@
 [![Build](https://github.com/dongzongao/hutulock/actions/workflows/maven-publish.yml/badge.svg)](https://github.com/dongzongao/hutulock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-11%2B-orange.svg)](https://openjdk.org)
-[![Version](https://img.shields.io/badge/version-1.0.1--SNAPSHOT-green.svg)](https://github.com/dongzongao/hutulock/packages)
+[![Version](https://img.shields.io/badge/version-1.0.2--SNAPSHOT-green.svg)](https://github.com/dongzongao/hutulock/packages)
+
+Tested on JDK 11 and JDK 17.
 
 </div>
 
@@ -92,7 +94,7 @@ Client SDK  ──TCP──►  LockServerHandler
 
 | Language | Dependency |
 |:---------|:-----------|
-| ☕ Java | `com.hutulock:hutulock-client:1.0.1-SNAPSHOT` |
+| ☕ Java | `com.hutulock:hutulock-client:1.0.2-SNAPSHOT` |
 | 🐍 Python | `pip install hutulock` |
 | 🐹 Go | `go get github.com/hutulock/hutulock-go` |
 | 🐘 PHP | `composer require hutulock/hutulock-php` |

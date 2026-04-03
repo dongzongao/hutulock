@@ -15,7 +15,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-JAR="${PROJECT_DIR}/hutulock-cli/target/hutulock-cli-1.0.1-SNAPSHOT.jar"
+JAR="${PROJECT_DIR}/hutulock-cli/target/hutulock-cli-1.0.2-SNAPSHOT.jar"
 
 if [ ! -f "${JAR}" ]; then
     echo "[ERROR] JAR not found: ${JAR}"

@@ -28,7 +28,7 @@ set -euo pipefail
 # ---- 路径解析 ----
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-JAR="${PROJECT_DIR}/hutulock-server/target/hutulock-server-1.0.1-SNAPSHOT.jar"
+JAR="${PROJECT_DIR}/hutulock-server/target/hutulock-server-1.0.2-SNAPSHOT.jar"
 LOG_DIR="${PROJECT_DIR}/logs"
 
 # ---- 参数校验 ----
@@ -77,7 +77,7 @@ fi
 
 # ---- JVM 参数 ----
 # hutulock-server JVM 调优策略：
-#   - 低延迟优先：ZGC（JDK 15+）或 G1GC（JDK 11）
+#   - 低延迟优先：ZGC（JDK 17+）或兼容运行时回退到 G1GC
 #   - 堆外内存：Netty DirectBuffer 不走堆，堆可以适当小一些
 #   - 减少 GC 停顿：对 Raft 心跳和锁操作的 P99 延迟影响最大
 JVM_OPTS="${JVM_OPTS:-}"
@@ -87,7 +87,7 @@ JVM_OPTS="${JVM_OPTS:-}"
 JVM_OPTS="${JVM_OPTS} -Xms512m -Xmx512m"
 
 # ---- 垃圾收集器 ----
-# 检测 JDK 版本，JDK 15+ 用 ZGC（亚毫秒停顿），否则用 G1GC
+# 检测 JDK 版本，JDK 17+ 用 ZGC（亚毫秒停顿），否则用 G1GC
 JAVA_MAJOR=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
 if [ "${JAVA_MAJOR}" -ge 15 ] 2>/dev/null; then
     # ZGC：亚毫秒停顿，适合低延迟锁服务
@@ -95,7 +95,7 @@ if [ "${JAVA_MAJOR}" -ge 15 ] 2>/dev/null; then
     JVM_OPTS="${JVM_OPTS} -XX:ZCollectionInterval=5"       # 最大 5s 触发一次 GC
     JVM_OPTS="${JVM_OPTS} -XX:ZUncommitDelay=60"           # 60s 后归还空闲内存给 OS
 else
-    # G1GC：JDK 11 默认，调低停顿目标
+    # G1GC：旧版本兼容回退路径，调低停顿目标
     JVM_OPTS="${JVM_OPTS} -XX:+UseG1GC"
     JVM_OPTS="${JVM_OPTS} -XX:MaxGCPauseMillis=20"         # 目标停顿 ≤ 20ms
     JVM_OPTS="${JVM_OPTS} -XX:G1HeapRegionSize=4m"         # 4MB region，减少大对象晋升

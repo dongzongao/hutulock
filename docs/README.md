@@ -143,7 +143,7 @@ hutulock(a3f8c2d1)[1 lock(s)]> unlock order-lock
 <dependency>
     <groupId>com.hutulock</groupId>
     <artifactId>hutulock-client</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.2-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -393,15 +393,15 @@ HutuLock 发布到 [GitHub Packages](https://github.com/hutulock/hutulock/packag
 <dependency>
     <groupId>com.hutulock</groupId>
     <artifactId>hutulock-client</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.2-SNAPSHOT</version>
 </dependency>
 ```
 
 **发布新版本（打 tag 自动触发 CI）：**
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.2
+git push origin v1.0.2
 ```
 
 ---
