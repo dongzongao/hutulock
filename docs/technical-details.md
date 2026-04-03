@@ -14,7 +14,8 @@
 10. [代理模块](#10-代理模块)
 11. [内存管理](#11-内存管理)
 12. [兜底机制](#12-兜底机制)
-13. [模块依赖图](#13-模块依赖图)
+13. [JVM 调优](#13-jvm-调优)
+14. [模块依赖图](#14-模块依赖图)
 
 ---
 
@@ -501,7 +502,134 @@ release()
 
 ---
 
-## 13. 模块依赖图
+## 13. JVM 调优
+
+hutulock-server 是低延迟锁服务，核心诉求是**最小化 GC 停顿**（直接影响 Raft 心跳和锁操作的 P99 延迟）。调优参数集中在 `bin/server.sh` 和 `docker/entrypoint.sh`。
+
+### 调优目标
+
+| 指标 | 目标值 | 说明 |
+|------|--------|------|
+| GC 停顿 P99 | < 20ms | Raft 心跳默认 50ms，停顿超过 1/3 会触发误选举 |
+| 堆外内存 | ≤ 256MB | Netty DirectBuffer 不走堆，需单独限制 |
+| 堆扩容 | 禁止 | `Xms=Xmx` 避免运行时扩容触发 Full GC |
+
+### GC 收集器选择
+
+```
+JDK 版本检测
+    ├── JDK 15+  →  ZGC（亚毫秒停顿，推荐）
+    └── JDK 11   →  G1GC（MaxGCPauseMillis=20）
+```
+
+**ZGC 参数（JDK 15+）：**
+
+| 参数 | 值 | 说明 |
+|------|----|------|
+| `-XX:+UseZGC` | — | 启用 ZGC |
+| `-XX:ZCollectionInterval` | `5` | 最大 5s 触发一次 GC，防止内存长期不回收 |
+| `-XX:ZUncommitDelay` | `60` | 60s 后将空闲堆内存归还给 OS（容器友好） |
+
+**G1GC 参数（JDK 11 降级）：**
+
+| 参数 | 值 | 说明 |
+|------|----|------|
+| `-XX:+UseG1GC` | — | 启用 G1GC |
+| `-XX:MaxGCPauseMillis` | `20` | 目标停顿 ≤ 20ms |
+| `-XX:G1HeapRegionSize` | `4m` | 4MB region，减少大对象直接晋升 Old 区 |
+| `-XX:G1NewSizePercent` | `20` | 新生代最小 20%，避免过小导致频繁 Minor GC |
+| `-XX:G1MaxNewSizePercent` | `40` | 新生代最大 40% |
+| `-XX:InitiatingHeapOccupancyPercent` | `35` | 35% 时触发并发标记（默认 45%，提前触发减少 Mixed GC 压力） |
+| `-XX:G1MixedGCCountTarget` | `8` | 混合 GC 分 8 次完成，每次停顿更短 |
+
+### 堆内存
+
+```bash
+-Xms512m -Xmx512m   # Xms = Xmx，禁止运行时堆扩容
+```
+
+`Xms=Xmx` 是低延迟服务的标准做法：堆扩容会触发 Full GC，在 Raft 选举窗口内可能导致 Leader 误判。
+
+### Netty 堆外内存
+
+Netty 默认使用 `DirectBuffer`（堆外），不受 `-Xmx` 限制，需单独控制：
+
+| 参数 | 值 | 说明 |
+|------|----|------|
+| `-XX:MaxDirectMemorySize` | `256m` | 限制堆外内存上限，防止 OOM |
+| `-Dio.netty.leakDetection.level` | `disabled` | 关闭泄漏检测采样（生产环境，有 ~1% 性能开销） |
+| `-Dio.netty.allocator.type` | `pooled` | 显式指定池化分配器，减少 DirectBuffer 分配次数 |
+
+### JIT 编译优化
+
+| 参数 | 说明 |
+|------|------|
+| `-XX:+TieredCompilation` | 分层编译（JDK 8+ 默认开启，显式声明） |
+| `-XX:CompileThreshold=1000` | 降低 JIT 触发阈值（默认 10000），加快热身，减少解释执行时间 |
+| `-XX:+OptimizeStringConcat` | 优化字符串拼接，对协议序列化（`Message.serialize()`）有效 |
+| `-XX:+UseStringDeduplication` | 字符串去重，ZNode 路径高度重复（如 `/locks/order-lock/seq-0000000001`），可节省 10~20% 堆空间 |
+
+### 线程栈
+
+```bash
+-Xss256k   # 默认 512k，Netty worker 线程多，减小栈大小降低内存占用
+```
+
+Netty 默认 `workerThreads = 2 * CPU`，每个线程节省 256k，16 核机器可节省约 4MB。
+
+### 其他关键参数
+
+| 参数 | 说明 |
+|------|------|
+| `-Djava.security.egd=file:/dev/./urandom` | 加速随机数生成，影响 HMAC 认证（`/dev/random` 在熵不足时会阻塞） |
+| `-XX:+DisableExplicitGC` | 禁止代码中调用 `System.gc()`，防止 Netty 内部触发意外 Full GC |
+| `-XX:+ExitOnOutOfMemoryError` | OOM 时直接退出，让 K8s/Supervisor 重启，避免进程僵死 |
+| `-XX:+HeapDumpOnOutOfMemoryError` | OOM 时自动 dump，便于事后分析 |
+
+### GC 日志
+
+```bash
+-Xlog:gc*:file=${LOG_DIR}/gc-${NODE_ID}.log:time,uptime,level,tags:filecount=5,filesize=20m
+```
+
+- 滚动写入，最多 5 个文件，每个 20MB
+- 包含 GC 类型、停顿时间、堆使用情况
+- 可用 `GCViewer` 或 `GCEasy` 分析
+
+### 快速参考：完整参数组合
+
+**生产环境（JDK 17+，4 核 8GB 节点）：**
+
+```bash
+-Xms2g -Xmx2g
+-XX:+UseZGC
+-XX:ZCollectionInterval=5
+-XX:ZUncommitDelay=60
+-XX:MaxDirectMemorySize=512m
+-Xss256k
+-XX:CompileThreshold=1000
+-XX:+UseStringDeduplication
+-XX:+DisableExplicitGC
+-XX:+ExitOnOutOfMemoryError
+-XX:+HeapDumpOnOutOfMemoryError
+-Djava.security.egd=file:/dev/./urandom
+-Dio.netty.leakDetection.level=disabled
+-Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=20m
+```
+
+**开发/测试环境（JDK 11，1 核 1GB）：**
+
+```bash
+-Xms256m -Xmx256m
+-XX:+UseG1GC
+-XX:MaxGCPauseMillis=50
+-XX:MaxDirectMemorySize=128m
+-XX:+ExitOnOutOfMemoryError
+```
+
+---
+
+## 14. 模块依赖图
 
 ```
 ┌─────────────────────────────────────────────────────────┐
