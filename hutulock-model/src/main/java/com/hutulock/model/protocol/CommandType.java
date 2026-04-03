@@ -50,8 +50,8 @@ public enum CommandType {
     CONNECTED(1, 1),
     /** OK <lockName> [seqNodePath] */
     OK(1, 2),
-    /** WAIT <lockName> <seqNodePath> */
-    WAIT(2, 2),
+    /** WAIT <lockName> <seqNodePath> [watchNodePath] */
+    WAIT(2, 3),
     /** RELEASED <seqNodePath> */
     RELEASED(1, 1),
     /** RENEWED <lockName> */

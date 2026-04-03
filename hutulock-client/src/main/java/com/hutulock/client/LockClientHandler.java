@@ -24,7 +24,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
@@ -46,7 +48,9 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
     private static final Logger log = LoggerFactory.getLogger(LockClientHandler.class);
 
     /** 请求 key → pending future。key 格式：{@code TYPE:lockName} 或 {@code TYPE:seqPath} */
-    private final Map<String, CompletableFuture<Message>> pendingRequests = new ConcurrentHashMap<>();
+    private final Map<String, PendingRequest> pendingRequests = new ConcurrentHashMap<>();
+    /** 记录请求注册顺序，用于 ERROR 响应的兜底匹配。 */
+    private final Queue<String> pendingOrder = new ConcurrentLinkedQueue<>();
 
     /** seqNodePath → Watcher 回调（One-shot，触发后自动移除） */
     private final Map<String, Consumer<WatchEvent>> watcherCallbacks = new ConcurrentHashMap<>();
@@ -83,6 +87,7 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
                 break;
             case WAIT:
                 complete("LOCK:" + msg.arg(0), msg);
+                complete("RECHECK:" + msg.arg(1), msg);
                 break;
             case RELEASED:
                 complete("UNLOCK:" + msg.arg(0), msg);
@@ -97,11 +102,7 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
                 complete("SET_DATA:" + msg.arg(0), msg);
                 break;
             case ERROR:
-                completeExceptionally(msg);
-                // Also complete GET_DATA futures with error response (not exception)
-                pendingRequests.entrySet().stream()
-                    .filter(e -> e.getKey().startsWith("GET_DATA:"))
-                    .forEach(e -> e.getValue().complete(msg));
+                completeError(msg);
                 break;
             default:
                 log.warn("Unhandled message type: {}", msg.getType());
@@ -124,17 +125,27 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
     private void handleRedirect(Message msg) {
         String leaderId = msg.arg(0);  // Schema 保证 REDIRECT 有 1 个参数
         log.info("Redirected to leader: {}", leaderId);
-        pendingRequests.forEach((k, f) ->
-            f.complete(Message.of(CommandType.REDIRECT, leaderId)));
+        pendingRequests.forEach((k, pending) ->
+            pending.future.complete(Message.of(CommandType.REDIRECT, leaderId)));
         pendingRequests.clear();
+        pendingOrder.clear();
         if (redirectListener != null) redirectListener.accept(leaderId);
     }
 
     // ==================== Future 管理 ====================
 
     public CompletableFuture<Message> registerRequest(String key) {
+        return registerRequest(key, false);
+    }
+
+    public CompletableFuture<Message> registerRequest(String key, boolean completeWithErrorResponse) {
         CompletableFuture<Message> future = new CompletableFuture<>();
-        pendingRequests.put(key, future);
+        PendingRequest pending = new PendingRequest(future, completeWithErrorResponse);
+        PendingRequest previous = pendingRequests.putIfAbsent(key, pending);
+        if (previous != null) {
+            throw new IllegalStateException("duplicate pending request: " + key);
+        }
+        pendingOrder.offer(key);
         return future;
     }
 
@@ -153,27 +164,58 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
     }
 
     private void complete(String key, Message msg) {
-        CompletableFuture<Message> f = pendingRequests.remove(key);
-        if (f != null) f.complete(msg);
+        PendingRequest pending = pendingRequests.remove(key);
+        if (pending != null) {
+            pendingOrder.remove(key);
+            pending.future.complete(msg);
+        }
     }
 
-    private void completeExceptionally(Message msg) {
+    private void completeError(Message msg) {
         String errMsg = msg.optArg(0).orElse("unknown error");
-        pendingRequests.forEach((k, f) -> f.completeExceptionally(new RuntimeException(errMsg)));
-        pendingRequests.clear();
+        while (true) {
+            String key = pendingOrder.poll();
+            if (key == null) {
+                log.warn("Received ERROR with no pending request: {}", errMsg);
+                return;
+            }
+
+            PendingRequest pending = pendingRequests.remove(key);
+            if (pending == null) {
+                continue;
+            }
+
+            if (pending.completeWithErrorResponse) {
+                pending.future.complete(msg);
+            } else {
+                pending.future.completeExceptionally(new RuntimeException(errMsg));
+            }
+            return;
+        }
     }
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
         log.warn("Connection lost");
-        pendingRequests.forEach((k, f) ->
-            f.completeExceptionally(new RuntimeException("connection lost")));
+        pendingRequests.forEach((k, pending) ->
+            pending.future.completeExceptionally(new RuntimeException("connection lost")));
         pendingRequests.clear();
+        pendingOrder.clear();
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         log.error("Channel error: {}", cause.getMessage());
         ctx.close();
+    }
+
+    private static final class PendingRequest {
+        private final CompletableFuture<Message> future;
+        private final boolean completeWithErrorResponse;
+
+        private PendingRequest(CompletableFuture<Message> future, boolean completeWithErrorResponse) {
+            this.future = future;
+            this.completeWithErrorResponse = completeWithErrorResponse;
+        }
     }
 }

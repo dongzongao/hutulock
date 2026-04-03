@@ -68,6 +68,8 @@ public final class LockContext {
     private volatile State  state = State.IDLE;
     /** 服务端分配的顺序节点路径，如 {@code /locks/order-lock/seq-0000000001} */
     private volatile String seqNodePath;
+    /** 当前等待的前驱节点路径，收到其删除事件后触发 recheck。 */
+    private volatile String watchNodePath;
     private volatile ScheduledFuture<?> watchdogTask;
 
     private LockContext(Builder b) {
@@ -132,7 +134,9 @@ public final class LockContext {
     public State  getState()       { return state;       }
     public boolean isHeld()        { return state == State.HELD; }
     public String getSeqNodePath() { return seqNodePath; }
+    public String getWatchNodePath() { return watchNodePath; }
     void   setSeqNodePath(String p){ this.seqNodePath = p; }
+    void   setWatchNodePath(String p) { this.watchNodePath = p; }
 
     @Override
     public String toString() {

@@ -172,9 +172,7 @@ public class HutuLockClient implements AutoCloseable {
 
     /** 使用默认配置获取锁（自动创建 LockContext）。 */
     public boolean lock(String lockName) throws Exception {
-        LockContext ctx = LockContext.builder(lockName, sessionId)
-            .scheduler(watchdogScheduler)
-            .build();
+        LockContext ctx = defaultContext(lockName);
         return lock(ctx);
     }
 
@@ -220,6 +218,7 @@ public class HutuLockClient implements AutoCloseable {
 
             if (resp.getType() == CommandType.OK) {
                 ctx.setSeqNodePath(resp.arg(1));
+                ctx.setWatchNodePath(null);
                 ctx.startWatchdog(channel);
                 heldContexts.put(ctx.getLockName(), ctx);
                 log.info("Lock acquired: lock={}, seq={}", ctx.getLockName(), ctx.getSeqNodePath());
@@ -228,6 +227,7 @@ public class HutuLockClient implements AutoCloseable {
 
             if (resp.getType() == CommandType.WAIT) {
                 ctx.setSeqNodePath(resp.arg(1));
+                ctx.setWatchNodePath(resp.optArg(2).orElse(ctx.getSeqNodePath()));
                 if (waitForLock(ctx, deadline)) return true;
                 break;
             }
@@ -240,12 +240,15 @@ public class HutuLockClient implements AutoCloseable {
      */
     private boolean waitForLock(LockContext ctx, long deadline) throws Exception {
         CompletableFuture<WatchEvent> watchFuture = new CompletableFuture<>();
-        handler.registerWatcher(ctx.getSeqNodePath(), watchFuture::complete);
+        String watchPath = ctx.getWatchNodePath() != null
+            ? ctx.getWatchNodePath()
+            : ctx.getSeqNodePath();
+        handler.registerWatcher(watchPath, watchFuture::complete);
 
         long remaining = deadline - System.currentTimeMillis();
         if (remaining <= 0) {
             // 超时：清理已注册的 Watcher，避免内存泄漏
-            handler.unregisterWatcher(ctx.getSeqNodePath());
+            handler.unregisterWatcher(watchPath);
             return false;
         }
 
@@ -254,7 +257,7 @@ public class HutuLockClient implements AutoCloseable {
             event = watchFuture.get(remaining, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             // 超时：清理已注册的 Watcher，避免内存泄漏
-            handler.unregisterWatcher(ctx.getSeqNodePath());
+            handler.unregisterWatcher(watchPath);
             return false;
         }
 
@@ -280,6 +283,7 @@ public class HutuLockClient implements AutoCloseable {
         Message resp = future.get(Math.max(remaining, 1000), TimeUnit.MILLISECONDS);
 
         if (resp.getType() == CommandType.OK) {
+            ctx.setWatchNodePath(null);
             ctx.startWatchdog(channel);
             heldContexts.put(ctx.getLockName(), ctx);
             log.info("Lock acquired after recheck: {}", ctx.getLockName());
@@ -287,6 +291,7 @@ public class HutuLockClient implements AutoCloseable {
         }
 
         if (resp.getType() == CommandType.WAIT) {
+            ctx.setWatchNodePath(resp.optArg(2).orElse(ctx.getSeqNodePath()));
             return waitForLock(ctx, deadline);
         }
         return false;
@@ -325,7 +330,7 @@ public class HutuLockClient implements AutoCloseable {
      * @return versioned data, or null if the node does not exist
      */
     public VersionedData getData(String path) throws Exception {
-        CompletableFuture<Message> future = handler.registerRequest("GET_DATA:" + path);
+        CompletableFuture<Message> future = handler.registerRequest("GET_DATA:" + path, true);
         channel.writeAndFlush(
             Message.of(CommandType.GET_DATA, path, sessionId).serialize() + "\n");
 
@@ -436,6 +441,14 @@ public class HutuLockClient implements AutoCloseable {
         }
         if (channel != null) channel.close();
         group.shutdownGracefully(0, 3, TimeUnit.SECONDS);
+    }
+
+    private LockContext defaultContext(String lockName) {
+        return LockContext.builder(lockName, sessionId)
+            .ttl(config.watchdogTtlMs, TimeUnit.MILLISECONDS)
+            .watchdogInterval(config.watchdogIntervalMs, TimeUnit.MILLISECONDS)
+            .scheduler(watchdogScheduler)
+            .build();
     }
 
     // ==================== Builder ====================
