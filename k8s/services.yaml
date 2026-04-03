@@ -38,6 +38,24 @@ spec:
       targetPort: 8881
 
 ---
+# ClusterIP Service — Admin API（控制台与伸缩控制器调用）
+apiVersion: v1
+kind: Service
+metadata:
+  name: hutulock-admin-api
+  namespace: hutulock
+  labels:
+    app: hutulock-server
+spec:
+  type: ClusterIP
+  selector:
+    app: hutulock-server
+  ports:
+    - name: admin
+      port: 9091
+      targetPort: 9091
+
+---
 # ClusterIP Service — Metrics（Prometheus 抓取）
 apiVersion: v1
 kind: Service

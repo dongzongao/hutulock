@@ -109,7 +109,8 @@ public class RaftNode implements Lifecycle {
 
         this.state = (dataDir != null) ? new RaftState(dataDir) : new RaftState();
 
-        this.replication = new RaftReplication(nodeId, state, stateMachine, props, metrics, eventBus, scheduler);
+        this.replication = new RaftReplication(
+            nodeId, state, stateMachine, props, metrics, eventBus, scheduler, this, raftGroup);
         this.election    = new RaftElection(nodeId, state, props, metrics, eventBus, scheduler, replication);
         this.replication.setElection(election);
 
@@ -169,7 +170,10 @@ public class RaftNode implements Lifecycle {
             java.util.Set<String> newMembers = new java.util.LinkedHashSet<>(oldMembers);
             newMembers.add(newNodeId);
 
-            String jointCmd = MembershipChange.encodeJoint(oldMembers, newMembers);
+            java.util.Map<String, MembershipChange.MemberEndpoint> endpoints = currentPeerEndpoints();
+            endpoints.put(newNodeId, new MembershipChange.MemberEndpoint(host, port));
+
+            String jointCmd = MembershipChange.encodeJoint(oldMembers, newMembers, endpoints);
             log.info("Proposing JOINT config: old={}, new={}", oldMembers, newMembers);
             return replication.propose(jointCmd);
         }
@@ -205,7 +209,7 @@ public class RaftNode implements Lifecycle {
             java.util.Set<String> newMembers = new java.util.LinkedHashSet<>(oldMembers);
             newMembers.remove(removeNodeId);
 
-            String jointCmd = MembershipChange.encodeJoint(oldMembers, newMembers);
+            String jointCmd = MembershipChange.encodeJoint(oldMembers, newMembers, currentPeerEndpoints());
             log.info("Proposing JOINT config for removal: old={}, new={}", oldMembers, newMembers);
             return replication.propose(jointCmd);
         }
@@ -217,6 +221,13 @@ public class RaftNode implements Lifecycle {
         ids.add(nodeId);
         state.peers.forEach(p -> ids.add(p.nodeId));
         return ids;
+    }
+
+    private java.util.Map<String, MembershipChange.MemberEndpoint> currentPeerEndpoints() {
+        java.util.Map<String, MembershipChange.MemberEndpoint> endpoints = new java.util.LinkedHashMap<>();
+        state.peers.forEach(p ->
+            endpoints.put(p.nodeId, new MembershipChange.MemberEndpoint(p.host, p.port)));
+        return endpoints;
     }
 
     /** 根据当前 peers 列表同步更新 clusterConfig（初始化阶段使用）。 */

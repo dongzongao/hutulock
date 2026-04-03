@@ -62,7 +62,7 @@ data:
 
         # 反向代理 Admin API 到后端
         location /api/ {
-            proxy_pass http://hutulock-client:9091/api/;
+            proxy_pass http://hutulock-admin-api:9091/api/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
         }

@@ -30,28 +30,34 @@ spec:
       terminationGracePeriodSeconds: 30
 
       initContainers:
-        # 根据 Pod 序号（0/1/2）自动生成 NODE_ID 和 PEERS
+        # 根据 Pod 序号自动生成 NODE_ID 和 BOOTSTRAP PEERS
         - name: init-peers
           image: busybox:1.36
+          env:
+            - name: BOOTSTRAP_REPLICAS
+              value: "3"
           command:
             - sh
             - -c
             - |
-              # StatefulSet Pod 名称格式：hutulock-0, hutulock-1, hutulock-2
+              # StatefulSet Pod 名称格式：hutulock-0, hutulock-1, ...
               ORDINAL=${HOSTNAME##*-}
               NODE_ID="node$((ORDINAL + 1))"
-              CLIENT_PORT="888$((ORDINAL + 1))"
-              RAFT_PORT="988$((ORDINAL + 1))"
+              CLIENT_PORT="8881"
+              RAFT_PORT="9881"
 
-              # 构建 PEERS（排除自身）
+              # 构建引导 peers：新扩出来的 Pod 至少能连上初始投票集群，
+              # 后续成员变更中的 peer 信息由 Raft 日志同步补齐。
               PEERS=""
-              for i in 0 1 2; do
+              i=0
+              while [ "$i" -lt "$BOOTSTRAP_REPLICAS" ]; do
                 if [ "$i" != "$ORDINAL" ]; then
                   PEER_NODE="node$((i + 1))"
                   PEER_HOST="hutulock-${i}.hutulock-raft.hutulock.svc.cluster.local"
-                  PEER_RAFT_PORT="988$((i + 1))"
+                  PEER_RAFT_PORT="9881"
                   PEERS="${PEERS} ${PEER_NODE}:${PEER_HOST}:${PEER_RAFT_PORT}"
                 fi
+                i=$((i + 1))
               done
 
               echo "NODE_ID=${NODE_ID}" > /env/node.env

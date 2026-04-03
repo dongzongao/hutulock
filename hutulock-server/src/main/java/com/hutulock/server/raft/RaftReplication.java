@@ -23,6 +23,7 @@ import com.hutulock.spi.event.EventBus;
 import com.hutulock.spi.event.RaftEvent;
 import com.hutulock.spi.metrics.MetricsCollector;
 import io.netty.channel.Channel;
+import io.netty.channel.EventLoopGroup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,6 +64,8 @@ public final class RaftReplication {
     private final MetricsCollector metrics;
     private final EventBus         eventBus;
     private final ScheduledExecutorService scheduler;
+    private final RaftNode         owner;
+    private final EventLoopGroup   raftGroup;
 
     /** 快照管理器，null 表示不启用快照（内存模式）。 */
     private com.hutulock.server.persistence.SnapshotManager snapshotManager;
@@ -72,7 +75,8 @@ public final class RaftReplication {
 
     public RaftReplication(String nodeId, RaftState state, RaftStateMachine stateMachine,
                            ServerProperties props, MetricsCollector metrics, EventBus eventBus,
-                           ScheduledExecutorService scheduler) {
+                           ScheduledExecutorService scheduler, RaftNode owner,
+                           EventLoopGroup raftGroup) {
         this.nodeId       = nodeId;
         this.state        = state;
         this.stateMachine = stateMachine;
@@ -80,6 +84,8 @@ public final class RaftReplication {
         this.metrics      = metrics;
         this.eventBus     = eventBus;
         this.scheduler    = scheduler;
+        this.owner        = owner;
+        this.raftGroup    = raftGroup;
     }
 
     public void setElection(RaftElection election) {
@@ -529,13 +535,16 @@ public final class RaftReplication {
     private void applyMembershipChange(String command) {
         MembershipChange change = MembershipChange.decode(command);
         ClusterConfig newConfig = change.applyTo(state.clusterConfig);
+        reconcilePeers(change);
         state.clusterConfig = newConfig;
         log.info("Applied membership change: {}", change);
 
         if (change.type == MembershipChange.Type.JOINT) {
             // JOINT commit 后，Leader 自动 propose C_new（NORMAL）
             if (state.role == RaftNode.Role.LEADER) {
-                String normalCmd = MembershipChange.encodeNormal(change.newMembers);
+                java.util.Map<String, MembershipChange.MemberEndpoint> endpoints =
+                    filterEndpoints(change.memberEndpoints, change.newMembers);
+                String normalCmd = MembershipChange.encodeNormal(change.newMembers, endpoints);
                 log.info("JOINT committed, proposing NORMAL config: {}", change.newMembers);
                 // 异步 propose，避免在 advanceCommitIndex 锁内递归
                 scheduler.execute(() -> {
@@ -566,6 +575,38 @@ public final class RaftReplication {
                 failPendingProposesOnStepDown();
             }
         }
+    }
+
+    private void reconcilePeers(MembershipChange change) {
+        java.util.Set<String> targetMembers = new java.util.LinkedHashSet<>(change.oldMembers);
+        targetMembers.addAll(change.newMembers);
+
+        for (String memberId : targetMembers) {
+            if (memberId.equals(nodeId)) continue;
+            boolean exists = state.peers.stream().anyMatch(p -> p.nodeId.equals(memberId));
+            if (exists) continue;
+
+            MembershipChange.MemberEndpoint endpoint = change.endpointOf(memberId);
+            if (endpoint == null) continue;
+
+            RaftPeer peer = new RaftPeer(memberId, endpoint.host, endpoint.port, owner, raftGroup);
+            state.peers.add(peer);
+            peer.connect();
+            log.info("Added peer {} from membership change: {}:{}", memberId, endpoint.host, endpoint.port);
+        }
+    }
+
+    private java.util.Map<String, MembershipChange.MemberEndpoint> filterEndpoints(
+            java.util.Map<String, MembershipChange.MemberEndpoint> endpoints,
+            java.util.Set<String> members) {
+        java.util.Map<String, MembershipChange.MemberEndpoint> filtered = new java.util.LinkedHashMap<>();
+        for (String memberId : members) {
+            MembershipChange.MemberEndpoint endpoint = endpoints.get(memberId);
+            if (endpoint != null) {
+                filtered.put(memberId, endpoint);
+            }
+        }
+        return filtered;
     }
 
     // ==================== 降级清理 ====================

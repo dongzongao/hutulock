@@ -156,8 +156,12 @@ class ClusterMembershipTest {
     void encodeDecodeJoint_roundTrip() {
         Set<String> old = new LinkedHashSet<>(List.of("n1", "n2", "n3"));
         Set<String> nw  = new LinkedHashSet<>(List.of("n1", "n2", "n3", "n4"));
+        Map<String, MembershipChange.MemberEndpoint> endpoints = new LinkedHashMap<>();
+        endpoints.put("n2", new MembershipChange.MemberEndpoint("10.0.0.2", 9881));
+        endpoints.put("n3", new MembershipChange.MemberEndpoint("10.0.0.3", 9881));
+        endpoints.put("n4", new MembershipChange.MemberEndpoint("10.0.0.4", 9881));
 
-        String cmd = MembershipChange.encodeJoint(old, nw);
+        String cmd = MembershipChange.encodeJoint(old, nw, endpoints);
         assertTrue(cmd.startsWith(MembershipChange.CMD_JOINT));
         assertTrue(MembershipChange.isMembershipChange(cmd));
 
@@ -165,13 +169,19 @@ class ClusterMembershipTest {
         assertEquals(MembershipChange.Type.JOINT, change.type);
         assertEquals(old, change.oldMembers);
         assertEquals(nw,  change.newMembers);
+        assertEquals("10.0.0.4", change.endpointOf("n4").host);
+        assertEquals(9881, change.endpointOf("n4").port);
     }
 
     @Test
     void encodeDecodeNormal_roundTrip() {
         Set<String> members = new LinkedHashSet<>(List.of("n1", "n2", "n3", "n4"));
+        Map<String, MembershipChange.MemberEndpoint> endpoints = new LinkedHashMap<>();
+        endpoints.put("n2", new MembershipChange.MemberEndpoint("10.0.0.2", 9881));
+        endpoints.put("n3", new MembershipChange.MemberEndpoint("10.0.0.3", 9881));
+        endpoints.put("n4", new MembershipChange.MemberEndpoint("10.0.0.4", 9881));
 
-        String cmd = MembershipChange.encodeNormal(members);
+        String cmd = MembershipChange.encodeNormal(members, endpoints);
         assertTrue(cmd.startsWith(MembershipChange.CMD_NORMAL));
         assertTrue(MembershipChange.isMembershipChange(cmd));
 
@@ -179,6 +189,7 @@ class ClusterMembershipTest {
         assertEquals(MembershipChange.Type.NORMAL, change.type);
         assertEquals(members, change.oldMembers);
         assertTrue(change.newMembers.isEmpty());
+        assertEquals("10.0.0.2", change.endpointOf("n2").host);
     }
 
     @Test
