@@ -76,12 +76,66 @@ if [ ! -f "${JAR}" ]; then
 fi
 
 # ---- JVM 参数 ----
+# hutulock-server JVM 调优策略：
+#   - 低延迟优先：ZGC（JDK 15+）或 G1GC（JDK 11）
+#   - 堆外内存：Netty DirectBuffer 不走堆，堆可以适当小一些
+#   - 减少 GC 停顿：对 Raft 心跳和锁操作的 P99 延迟影响最大
 JVM_OPTS="${JVM_OPTS:-}"
-JVM_OPTS="${JVM_OPTS} -Xms256m -Xmx512m"
-JVM_OPTS="${JVM_OPTS} -XX:+UseG1GC"
+
+# ---- 堆内存 ----
+# Xms = Xmx 避免运行时堆扩容（扩容会触发 Full GC）
+JVM_OPTS="${JVM_OPTS} -Xms512m -Xmx512m"
+
+# ---- 垃圾收集器 ----
+# 检测 JDK 版本，JDK 15+ 用 ZGC（亚毫秒停顿），否则用 G1GC
+JAVA_MAJOR=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
+if [ "${JAVA_MAJOR}" -ge 15 ] 2>/dev/null; then
+    # ZGC：亚毫秒停顿，适合低延迟锁服务
+    JVM_OPTS="${JVM_OPTS} -XX:+UseZGC"
+    JVM_OPTS="${JVM_OPTS} -XX:ZCollectionInterval=5"       # 最大 5s 触发一次 GC
+    JVM_OPTS="${JVM_OPTS} -XX:ZUncommitDelay=60"           # 60s 后归还空闲内存给 OS
+else
+    # G1GC：JDK 11 默认，调低停顿目标
+    JVM_OPTS="${JVM_OPTS} -XX:+UseG1GC"
+    JVM_OPTS="${JVM_OPTS} -XX:MaxGCPauseMillis=20"         # 目标停顿 ≤ 20ms
+    JVM_OPTS="${JVM_OPTS} -XX:G1HeapRegionSize=4m"         # 4MB region，减少大对象晋升
+    JVM_OPTS="${JVM_OPTS} -XX:G1NewSizePercent=20"         # 新生代最小 20%
+    JVM_OPTS="${JVM_OPTS} -XX:G1MaxNewSizePercent=40"      # 新生代最大 40%
+    JVM_OPTS="${JVM_OPTS} -XX:InitiatingHeapOccupancyPercent=35"  # 35% 时触发并发标记
+    JVM_OPTS="${JVM_OPTS} -XX:G1MixedGCCountTarget=8"     # 混合 GC 分 8 次完成
+fi
+
+# ---- JIT 编译优化 ----
+JVM_OPTS="${JVM_OPTS} -XX:+TieredCompilation"              # 分层编译（默认开启，显式声明）
+JVM_OPTS="${JVM_OPTS} -XX:CompileThreshold=1000"           # 降低 JIT 触发阈值，更快热身
+JVM_OPTS="${JVM_OPTS} -XX:+OptimizeStringConcat"           # 优化字符串拼接（协议序列化）
+JVM_OPTS="${JVM_OPTS} -XX:+UseStringDeduplication"         # 字符串去重（ZNode 路径大量重复）
+
+# ---- Netty 堆外内存 ----
+# Netty 默认用 DirectBuffer，限制最大堆外内存防止 OOM
+JVM_OPTS="${JVM_OPTS} -XX:MaxDirectMemorySize=256m"
+# 关闭 Netty 的 ResourceLeakDetector（生产环境，避免采样开销）
+JVM_OPTS="${JVM_OPTS} -Dio.netty.leakDetection.level=disabled"
+# Netty 线程本地缓存，减少 DirectBuffer 分配
+JVM_OPTS="${JVM_OPTS} -Dio.netty.allocator.type=pooled"
+
+# ---- 线程栈 ----
+# Netty worker 线程多，减小栈大小降低内存占用
+JVM_OPTS="${JVM_OPTS} -Xss256k"
+
+# ---- GC 日志（可观测性）----
+LOG_GC="${LOG_DIR}/gc-${NODE_ID}.log"
+JVM_OPTS="${JVM_OPTS} -Xlog:gc*:file=${LOG_GC}:time,uptime,level,tags:filecount=5,filesize=20m"
+
+# ---- OOM 保护 ----
 JVM_OPTS="${JVM_OPTS} -XX:+HeapDumpOnOutOfMemoryError"
 JVM_OPTS="${JVM_OPTS} -XX:HeapDumpPath=${LOG_DIR}/heapdump-${NODE_ID}.hprof"
+JVM_OPTS="${JVM_OPTS} -XX:+ExitOnOutOfMemoryError"         # OOM 直接退出，让 K8s 重启
+
+# ---- 其他 ----
 JVM_OPTS="${JVM_OPTS} -Dfile.encoding=UTF-8"
+JVM_OPTS="${JVM_OPTS} -Djava.security.egd=file:/dev/./urandom"  # 加速随机数（影响 HMAC 认证）
+JVM_OPTS="${JVM_OPTS} -XX:+DisableExplicitGC"              # 禁止代码中调用 System.gc()
 
 # 代理开关
 if [ -n "${PROXY_TYPES}" ]; then

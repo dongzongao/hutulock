@@ -13,8 +13,13 @@ set -e
 NODE_ID="${NODE_ID:-node1}"
 CLIENT_PORT="${CLIENT_PORT:-8881}"
 RAFT_PORT="${RAFT_PORT:-9881}"
-JVM_OPTS="${JVM_OPTS:--Xms256m -Xmx512m -XX:+UseG1GC}"
 CONFIG_FILE="${CONFIG_FILE:-/app/config/hutulock.yml}"
+
+# JVM 调优默认值（容器环境）
+# Xms=Xmx 避免堆扩容触发 Full GC
+# ZGC 亚毫秒停顿，适合低延迟锁服务（JDK 15+）
+# 降级到 G1GC 时设置 MaxGCPauseMillis=20
+JVM_OPTS="${JVM_OPTS:--Xms512m -Xmx512m -XX:+UseZGC -XX:ZCollectionInterval=5 -XX:MaxDirectMemorySize=256m -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -Djava.security.egd=file:/dev/./urandom -Dio.netty.leakDetection.level=disabled}"
 
 # 将 PEERS 字符串转为参数列表
 PEER_ARGS=""
