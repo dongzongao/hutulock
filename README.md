@@ -2,18 +2,15 @@
 
 # 🔒 HutuLock
 
-**Production-ready distributed lock service with Raft consensus | High-performance Java distributed locking solution**
+**Production-ready lock service with Raft consensus | High-performance Java locking solution**
 
-*Enterprise-grade distributed lock system for microservices | Drop-in replacement for Redis locks and MySQL optimistic locking*
+*Enterprise-grade lock system for microservices | Drop-in replacement for Redis locks and MySQL optimistic locking*
 
 [![Build](https://github.com/dongzongao/hutulock/actions/workflows/maven-publish.yml/badge.svg)](https://github.com/dongzongao/hutulock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-11%2B-orange.svg)](https://openjdk.org)
 [![Version](https://img.shields.io/badge/version-1.1.0-green.svg)](https://github.com/dongzongao/hutulock/releases/tag/v1.1.0)
-[![Distributed Lock](https://img.shields.io/badge/distributed-lock-brightgreen.svg)](https://github.com/dongzongao/hutulock)
 [![Raft Consensus](https://img.shields.io/badge/raft-consensus-blue.svg)](https://raft.github.io)
-
-**Keywords**: distributed lock, distributed locking, Java distributed lock, Raft consensus, high availability lock, microservices lock, Redis alternative, ZooKeeper alternative, optimistic locking, pessimistic locking, distributed coordination, distributed system, fault tolerance, high performance lock
 
 Tested on JDK 11 and JDK 17 | Production-ready | Battle-tested
 
@@ -21,9 +18,9 @@ Tested on JDK 11 and JDK 17 | Production-ready | Battle-tested
 
 ---
 
-## ✨ Why Choose HutuLock for Distributed Locking
+## ✨ Why Choose HutuLock for Locking
 
-HutuLock is a production-ready distributed lock service designed for microservices and distributed systems. Built on Raft consensus algorithm, it provides high availability, fault tolerance, and strong consistency guarantees.
+HutuLock is a production-ready lock service designed for microservices and cloud-native systems. Built on Raft consensus algorithm, it provides high availability, fault tolerance, and strong consistency guarantees.
 
 ### Feature Comparison: HutuLock vs Redis vs MySQL
 
@@ -32,7 +29,7 @@ HutuLock is a production-ready distributed lock service designed for microservic
 | High availability | ❌ | ❌ | ✅ Raft 3/5 nodes |
 | No single point of failure | ❌ | ❌ | ✅ |
 | Optimistic locking | ✅ | ❌ | ✅ |
-| Distributed lock | ❌ | ✅ | ✅ |
+| Pessimistic lock | ❌ | ✅ | ✅ |
 | Watchdog / auto-renew | ❌ | manual | ✅ |
 | **Auto-reconnect** | ❌ | ❌ | ✅ **NEW** |
 | **Smart retry** | ❌ | ❌ | ✅ **NEW** |
@@ -45,8 +42,8 @@ HutuLock is a production-ready distributed lock service designed for microservic
 
 - 🛒 **E-commerce**: Inventory management, order processing, flash sales (seckill)
 - 💰 **Financial**: Transaction processing, payment systems, account operations
-- 📊 **Data Processing**: Distributed task scheduling, batch processing, ETL pipelines
-- 🔄 **Microservices**: Service coordination, leader election, distributed configuration
+- 📊 **Data Processing**: Task scheduling, batch processing, ETL pipelines
+- 🔄 **Microservices**: Service coordination, leader election, configuration management
 - 🎮 **Gaming**: Resource allocation, matchmaking, leaderboard updates
 
 ---
@@ -104,11 +101,11 @@ java -jar hutulock-server.jar node1 8881 9881
 
 ---
 
-## 📖 Usage Examples - Distributed Locking Patterns
+## 📖 Usage Examples - Locking Patterns
 
-### Basic Distributed Lock (Auto-reconnect + Retry)
+### Basic Lock (Auto-reconnect + Retry)
 
-Simple distributed lock with automatic reconnection and retry on failure:
+Simple lock with automatic reconnection and retry on failure:
 
 ```java
 HutuLockClient client = HutuLockClient.builder()
@@ -117,7 +114,7 @@ HutuLockClient client = HutuLockClient.builder()
     .build();
 client.connect();
 
-// Distributed lock with auto-retry
+// Lock with auto-retry
 client.lock("order-lock");
 try {
     // Critical section - only one thread/process can execute
@@ -129,7 +126,7 @@ try {
 
 ### Advanced: Heartbeat Monitoring for Long-Running Tasks
 
-Distributed lock with watchdog and heartbeat monitoring:
+Lock with watchdog and heartbeat monitoring:
 
 ```java
 AtomicBoolean abortWork = new AtomicBoolean(false);
@@ -159,7 +156,7 @@ if (client.lock(ctx, 30, TimeUnit.SECONDS)) {
 
 ### Optimistic Locking - MySQL Alternative
 
-Replace MySQL optimistic locking with distributed version control:
+Replace MySQL optimistic locking with version control:
 
 ```java
 // Read data with version (replaces: SELECT data, version FROM t WHERE id = ?)
@@ -176,7 +173,7 @@ boolean ok = client.optimisticUpdate("/resources/order-123", 3, current -> {
 
 ### Flash Sale (Seckill) Optimization
 
-High-performance distributed locking for flash sales with read-write split:
+High-performance locking for flash sales with read-write split:
 
 ```java
 ReadWriteSplitClient fastClient = new ReadWriteSplitClient(client);
@@ -196,7 +193,7 @@ if (fastClient.isLockAvailable("seckill-item-123")) {
 
 ---
 
-## 🏗 Architecture - Distributed Lock System Design
+## 🏗 Architecture - Lock System Design
 
 HutuLock uses Raft consensus algorithm for strong consistency and fault tolerance:
 

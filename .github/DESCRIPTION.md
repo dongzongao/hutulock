@@ -1,12 +1,12 @@
-# HutuLock - Production-Ready Distributed Lock Service
+# HutuLock - Production-Ready Lock Service
 
 ## Short Description (for GitHub About)
 
-Production-ready distributed lock service with Raft consensus. High-performance Java distributed locking solution for microservices. Drop-in replacement for Redis locks and MySQL optimistic locking.
+Production-ready lock service with Raft consensus. High-performance Java locking solution for microservices. Drop-in replacement for Redis locks and MySQL optimistic locking.
 
 ## Long Description
 
-HutuLock is an enterprise-grade distributed lock system designed for microservices and distributed systems. Built on the Raft consensus algorithm, it provides high availability, fault tolerance, and strong consistency guarantees.
+HutuLock is an enterprise-grade lock system designed for microservices and cloud-native systems. Built on the Raft consensus algorithm, it provides high availability, fault tolerance, and strong consistency guarantees.
 
 ### Key Features
 
@@ -26,7 +26,7 @@ HutuLock is an enterprise-grade distributed lock system designed for microservic
 
 - E-commerce inventory management and flash sales (seckill)
 - Financial transaction processing and payment systems
-- Distributed task scheduling and batch processing
+- Task scheduling and batch processing
 - Microservices coordination and leader election
 - Gaming resource allocation and matchmaking
 
@@ -47,13 +47,12 @@ HutuLock is an enterprise-grade distributed lock system designed for microservic
 
 ## GitHub Topics (Keywords)
 
-distributed-lock, distributed-locking, java, raft, consensus, high-availability, microservices, distributed-system, fault-tolerance, redis-alternative, zookeeper-alternative, optimistic-locking, pessimistic-locking, distributed-coordination, lock-service, concurrency-control, distributed-computing, cloud-native, kubernetes, docker
+lock-service, java, raft, consensus, high-availability, microservices, cloud-native, fault-tolerance, redis-alternative, zookeeper-alternative, optimistic-locking, pessimistic-locking, concurrency-control, kubernetes, docker
 
 ## SEO Keywords
 
-- distributed lock
-- distributed locking
-- Java distributed lock
+- lock service
+- Java lock
 - Raft consensus
 - high availability lock
 - microservices lock
@@ -61,23 +60,16 @@ distributed-lock, distributed-locking, java, raft, consensus, high-availability,
 - ZooKeeper alternative
 - optimistic locking
 - pessimistic locking
-- distributed coordination
-- distributed system
 - fault tolerance
 - high performance lock
-- distributed lock service
-- distributed lock system
-- distributed lock implementation
-- distributed lock Java
-- distributed lock Raft
-- distributed lock cluster
-- distributed lock high availability
-- distributed lock fault tolerance
-- distributed lock strong consistency
-- distributed lock microservices
-- distributed lock e-commerce
-- distributed lock financial
-- distributed lock gaming
-- distributed lock cloud native
-- distributed lock Kubernetes
-- distributed lock Docker
+- lock system
+- lock implementation
+- Java Raft
+- lock cluster
+- strong consistency
+- microservices coordination
+- e-commerce lock
+- financial lock
+- cloud native lock
+- Kubernetes lock
+- Docker lock
