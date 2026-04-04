@@ -1,0 +1,21 @@
+#!/bin/bash
+# Post-commit hook: 在提交后执行的操作
+
+# 检查是否是首次提交或 hooks 未安装
+if [ ! -f .git/hooks/commit-msg ] || [ ! -x .git/hooks/commit-msg ]; then
+    echo ""
+    echo "检测到 git hooks 未安装，正在自动安装..."
+    if [ -f ./install-hooks.sh ]; then
+        ./install-hooks.sh
+    fi
+fi
+
+# 显示提交信息
+echo ""
+echo "✅ 提交成功"
+echo ""
+
+# 显示最近的提交
+git log -1 --oneline
+
+exit 0
