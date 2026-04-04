@@ -48,6 +48,7 @@ echo "步骤 3/5: 运行性能测试..."
 
 cat > BenchmarkRunner.java << 'EOF'
 import com.hutulock.client.HutuLockClient;
+import com.hutulock.client.fast.ReadWriteSplitClient;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import java.io.*;
@@ -65,23 +66,25 @@ public class BenchmarkRunner {
         client.connect();
         System.out.println("✅ 已连接");
         
+        ReadWriteSplitClient fastClient = new ReadWriteSplitClient(client);
+        
         Map<String, Object> results = new LinkedHashMap<>();
         results.put("timestamp", Instant.now().toString());
         results.put("commit", "local-test");
         
         // 简化测试：每个只运行 10 秒
         System.out.println("\n运行读测试 (10秒)...");
-        Map<String, Object> readTest = runTest(client, 50, 10, "read");
+        Map<String, Object> readTest = runTest(fastClient, 50, 10, "read");
         results.put("read_test", readTest);
         System.out.println("  QPS: " + readTest.get("qps"));
         
         System.out.println("\n运行写测试 (10秒)...");
-        Map<String, Object> writeTest = runTest(client, 25, 10, "write");
+        Map<String, Object> writeTest = runTest(fastClient, 25, 10, "write");
         results.put("write_test", writeTest);
         System.out.println("  QPS: " + writeTest.get("qps"));
         
         System.out.println("\n运行混合测试 (10秒)...");
-        Map<String, Object> mixedTest = runTest(client, 50, 10, "mixed");
+        Map<String, Object> mixedTest = runTest(fastClient, 50, 10, "mixed");
         results.put("mixed_test", mixedTest);
         System.out.println("  QPS: " + mixedTest.get("qps"));
         
@@ -91,7 +94,7 @@ public class BenchmarkRunner {
         System.out.println("\n✅ 测试完成，结果已保存到 benchmark-results.json");
     }
     
-    static Map<String, Object> runTest(HutuLockClient client, int threads, int seconds, String type) throws Exception {
+    static Map<String, Object> runTest(ReadWriteSplitClient client, int threads, int seconds, String type) throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(threads);
         AtomicLong successCount = new AtomicLong(0);
         AtomicLong failCount = new AtomicLong(0);
@@ -108,17 +111,21 @@ public class BenchmarkRunner {
                     long start = System.nanoTime();
                     try {
                         if ("read".equals(type)) {
-                            client.exists("/" + lockName);
+                            client.isLockAvailable(lockName);
                         } else if ("write".equals(type)) {
-                            if (client.tryLock(lockName, 5, TimeUnit.SECONDS)) {
-                                client.unlock(lockName);
+                            boolean locked = client.tryLockAsync(lockName, 5, TimeUnit.SECONDS)
+                                .get(5, TimeUnit.SECONDS);
+                            if (locked) {
+                                client.unlockAsync(lockName).get(5, TimeUnit.SECONDS);
                             }
                         } else {
                             if (Math.random() < 0.9) {
-                                client.exists("/" + lockName);
+                                client.isLockAvailable(lockName);
                             } else {
-                                if (client.tryLock(lockName, 5, TimeUnit.SECONDS)) {
-                                    client.unlock(lockName);
+                                boolean locked = client.tryLockAsync(lockName, 5, TimeUnit.SECONDS)
+                                    .get(5, TimeUnit.SECONDS);
+                                if (locked) {
+                                    client.unlockAsync(lockName).get(5, TimeUnit.SECONDS);
                                 }
                             }
                         }
