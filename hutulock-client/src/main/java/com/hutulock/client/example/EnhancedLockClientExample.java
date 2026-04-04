@@ -239,10 +239,10 @@ public class EnhancedLockClientExample {
         RetryPolicy retryPolicy = new RetryPolicy(retryConfig);
 
         // 模拟不稳定的操作
-        int attempt = 0;
+        AtomicInteger attempt = new AtomicInteger(0);
         try {
             retryPolicy.execute(() -> {
-                int currentAttempt = ++attempt;
+                int currentAttempt = attempt.incrementAndGet();
                 log.info("Attempt {}", currentAttempt);
 
                 // 模拟网络抖动：前 3 次失败
@@ -258,6 +258,6 @@ public class EnhancedLockClientExample {
             log.error("Operation failed after retries: {}", e.getMessage());
         }
 
-        log.info("Total attempts: {}", attempt);
+        log.info("Total attempts: {}", attempt.get());
     }
 }
