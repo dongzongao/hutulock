@@ -15,12 +15,12 @@
  */
 package com.hutulock.client;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * RetryPolicy 单元测试
@@ -29,7 +29,7 @@ public class RetryPolicyTest {
 
     private RetryPolicy retryPolicy;
 
-    @Before
+    @BeforeEach
     public void setUp() {
         RetryPolicy.Config config = new RetryPolicy.Config();
         config.maxAttempts = 3;
@@ -132,27 +132,30 @@ public class RetryPolicyTest {
         assertEquals(3, attempts.get());
     }
 
-    @Test(expected = RuntimeException.class)
-    public void testExecute_FailAfterMaxRetries() throws Exception {
+    @Test
+    public void testExecute_FailAfterMaxRetries() {
         AtomicInteger attempts = new AtomicInteger(0);
 
-        retryPolicy.execute(() -> {
-            attempts.incrementAndGet();
-            throw new RuntimeException("PROPOSE_TIMEOUT");
+        assertThrows(RuntimeException.class, () -> {
+            retryPolicy.execute(() -> {
+                attempts.incrementAndGet();
+                throw new RuntimeException("PROPOSE_TIMEOUT");
+            });
         });
 
-        // 应该抛出异常
         // 验证重试了 3 次
         assertEquals(3, attempts.get());
     }
 
-    @Test(expected = RuntimeException.class)
-    public void testExecute_NonRetryableError() throws Exception {
+    @Test
+    public void testExecute_NonRetryableError() {
         AtomicInteger attempts = new AtomicInteger(0);
 
-        retryPolicy.execute(() -> {
-            attempts.incrementAndGet();
-            throw new RuntimeException("SESSION_EXPIRED");
+        assertThrows(RuntimeException.class, () -> {
+            retryPolicy.execute(() -> {
+                attempts.incrementAndGet();
+                throw new RuntimeException("SESSION_EXPIRED");
+            });
         });
 
         // 不可重试错误，只尝试 1 次

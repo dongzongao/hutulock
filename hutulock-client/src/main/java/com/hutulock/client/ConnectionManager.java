@@ -340,10 +340,15 @@ public class ConnectionManager {
             adaptiveTimeoutMs.set(newTimeout);
 
             // 恢复健康
-            if (node.health == NodeHealth.UNHEALTHY && successes >= config.healthyThreshold) {
+            if (node.health == NodeHealth.UNKNOWN) {
+                // 从未知状态，第一次成功就变为健康
+                node.health = NodeHealth.HEALTHY;
+            } else if (node.health == NodeHealth.UNHEALTHY && successes >= config.healthyThreshold) {
+                // 从不健康状态恢复，需要连续成功达到阈值
                 node.health = NodeHealth.HEALTHY;
                 log.info("Node {} recovered to HEALTHY", node);
-            } else if (node.health != NodeHealth.UNHEALTHY) {
+            } else if (node.health == NodeHealth.DEGRADED && successes >= 1) {
+                // 从降级状态，1 次成功就恢复健康
                 node.health = NodeHealth.HEALTHY;
             }
 
@@ -356,7 +361,8 @@ public class ConnectionManager {
             if (failures >= config.unhealthyThreshold) {
                 node.health = NodeHealth.UNHEALTHY;
                 log.warn("Node {} marked as UNHEALTHY (failures: {})", node, failures);
-            } else if (failures >= config.unhealthyThreshold / 2) {
+            } else if (failures >= 2 && failures < config.unhealthyThreshold) {
+                // 失败 2 次以上但未达到不健康阈值，标记为降级
                 node.health = NodeHealth.DEGRADED;
                 log.warn("Node {} degraded (failures: {})", node, failures);
             }
@@ -368,6 +374,10 @@ public class ConnectionManager {
      */
     public void onRequestSuccess(long latencyMs) {
         NodeInfo node = findNode(currentNodeId);
+        if (node == null && !nodes.isEmpty()) {
+            // 如果没有当前节点，使用第一个节点
+            node = nodes.get(0);
+        }
         if (node != null) {
             updateNodeHealth(node, true, latencyMs);
         }
@@ -378,6 +388,10 @@ public class ConnectionManager {
      */
     public void onRequestFailure() {
         NodeInfo node = findNode(currentNodeId);
+        if (node == null && !nodes.isEmpty()) {
+            // 如果没有当前节点，使用第一个节点
+            node = nodes.get(0);
+        }
         if (node != null) {
             updateNodeHealth(node, false, 0);
         }

@@ -15,12 +15,12 @@
  */
 package com.hutulock.client;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * HeartbeatMonitor 单元测试
@@ -29,7 +29,7 @@ public class HeartbeatMonitorTest {
 
     private HeartbeatMonitor monitor;
 
-    @Before
+    @BeforeEach
     public void setUp() {
         HeartbeatMonitor.Config config = new HeartbeatMonitor.Config();
         config.warningThreshold = 2;

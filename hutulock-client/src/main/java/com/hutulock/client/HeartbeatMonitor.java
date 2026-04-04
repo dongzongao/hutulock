@@ -89,8 +89,12 @@ public class HeartbeatMonitor {
 
         // 状态恢复
         State current = state;
-        if (current != State.HEALTHY) {
-            if (successes >= 2) {  // 连续 2 次成功恢复健康
+        if (current == State.DISCONNECTED) {
+            // 从断连状态，第一次成功就恢复健康
+            updateState(State.HEALTHY);
+        } else if (current != State.HEALTHY) {
+            // 从 WARNING/CRITICAL 状态，需要连续 2 次成功恢复健康
+            if (successes >= 2) {
                 updateState(State.HEALTHY);
             }
         }
