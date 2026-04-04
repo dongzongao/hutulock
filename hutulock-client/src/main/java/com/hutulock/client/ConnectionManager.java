@@ -52,7 +52,9 @@ public class ConnectionManager {
 
     private static final Logger log = LoggerFactory.getLogger(ConnectionManager.class);
 
-    /** 节点健康状态 */
+    /**
+     * 节点健康状态
+     */
     public enum NodeHealth {
         HEALTHY,    // 健康
         DEGRADED,   // 降级（延迟高但可用）
@@ -60,7 +62,9 @@ public class ConnectionManager {
         UNKNOWN     // 未知（未尝试连接）
     }
 
-    /** 节点信息 */
+    /**
+     * 节点信息
+     */
     public static class NodeInfo {
         public final String id;
         public final String host;
@@ -81,11 +85,13 @@ public class ConnectionManager {
         @Override
         public String toString() {
             return String.format("%s(%s:%d, health=%s, latency=%dms)",
-                id, host, port, health, avgLatencyMs.get());
+                    id, host, port, health, avgLatencyMs.get());
         }
     }
 
-    /** 配置 */
+    /**
+     * 配置
+     */
     public static class Config {
         public int maxReconnectAttempts = 5;
         public long initialReconnectDelayMs = 100;
@@ -117,11 +123,11 @@ public class ConnectionManager {
     private final AtomicLong adaptiveTimeoutMs = new AtomicLong(5_000);
 
     private final ScheduledExecutorService healthCheckScheduler =
-        Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "hutulock-health-check");
-            t.setDaemon(true);
-            return t;
-        });
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "hutulock-health-check");
+                t.setDaemon(true);
+                return t;
+            });
 
     private volatile Consumer<String> onConnectionLost;
     private volatile Consumer<String> onConnectionRestored;
@@ -198,32 +204,32 @@ public class ConnectionManager {
 
                 int attempt = reconnectAttempts.incrementAndGet();
                 log.info("Attempting to reconnect to {} (attempt {}/{})",
-                    node, attempt, config.maxReconnectAttempts);
+                        node, attempt, config.maxReconnectAttempts);
 
                 try {
                     doConnect(node);
                     reconnectAttempts.set(0);
-                    
+
                     if (onConnectionRestored != null) {
                         onConnectionRestored.accept(node.id);
                     }
-                    
+
                     log.info("Reconnected to {}", node);
                     return;
 
                 } catch (Exception e) {
                     updateNodeHealth(node, false, 0);
-                    
+
                     long delay = calculateReconnectDelay(attempt);
                     log.warn("Reconnect to {} failed: {}, retrying in {}ms",
-                        node, e.getMessage(), delay);
-                    
+                            node, e.getMessage(), delay);
+
                     Thread.sleep(delay);
                 }
             }
 
             throw new RuntimeException("Reconnection failed after " +
-                config.maxReconnectAttempts + " attempts");
+                    config.maxReconnectAttempts + " attempts");
 
         } finally {
             reconnecting = false;
@@ -238,20 +244,20 @@ public class ConnectionManager {
         handler.setRedirectListener(leaderId -> handleRedirect(leaderId));
 
         Channel channel = new Bootstrap()
-            .group(group)
-            .channel(NioSocketChannel.class)
-            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, config.connectTimeoutMs)
-            .handler(new ChannelInitializer<SocketChannel>() {
-                @Override
-                protected void initChannel(SocketChannel ch) {
-                    ch.pipeline()
-                      .addLast(new LineBasedFrameDecoder(config.maxFrameLength))
-                      .addLast(new StringDecoder(CharsetUtil.UTF_8))
-                      .addLast(new StringEncoder(CharsetUtil.UTF_8))
-                      .addLast(handler);
-                }
-            })
-            .connect(node.host, node.port).sync().channel();
+                .group(group)
+                .channel(NioSocketChannel.class)
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, config.connectTimeoutMs)
+                .handler(new ChannelInitializer<SocketChannel>() {
+                    @Override
+                    protected void initChannel(SocketChannel ch) {
+                        ch.pipeline()
+                                .addLast(new LineBasedFrameDecoder(config.maxFrameLength))
+                                .addLast(new StringDecoder(CharsetUtil.UTF_8))
+                                .addLast(new StringEncoder(CharsetUtil.UTF_8))
+                                .addLast(handler);
+                    }
+                })
+                .connect(node.host, node.port).sync().channel();
 
         // 监听连接断开
         channel.closeFuture().addListener(future -> {
@@ -290,9 +296,15 @@ public class ConnectionManager {
             }
 
             switch (node.health) {
-                case HEALTHY:  healthy.add(node);  break;
-                case DEGRADED: degraded.add(node); break;
-                case UNKNOWN:  unknown.add(node);  break;
+                case HEALTHY:
+                    healthy.add(node);
+                    break;
+                case DEGRADED:
+                    degraded.add(node);
+                    break;
+                case UNKNOWN:
+                    unknown.add(node);
+                    break;
             }
         }
 
@@ -304,8 +316,8 @@ public class ConnectionManager {
         // 所有节点都不健康，选择最久未尝试的
         if (selected == null && !nodes.isEmpty()) {
             selected = nodes.stream()
-                .min(Comparator.comparingLong(n -> n.lastFailureTime))
-                .orElse(null);
+                    .min(Comparator.comparingLong(n -> n.lastFailureTime))
+                    .orElse(null);
         }
 
         return selected;
@@ -314,8 +326,8 @@ public class ConnectionManager {
     private NodeInfo selectLowestLatency(List<NodeInfo> candidates) {
         if (candidates.isEmpty()) return null;
         return candidates.stream()
-            .min(Comparator.comparingLong(n -> n.avgLatencyMs.get()))
-            .orElse(null);
+                .min(Comparator.comparingLong(n -> n.avgLatencyMs.get()))
+                .orElse(null);
     }
 
     /**
@@ -336,7 +348,7 @@ public class ConnectionManager {
 
             // 更新自适应超时（3 倍平均延迟）
             long newTimeout = Math.max(config.adaptiveTimeoutMinMs,
-                Math.min(newAvg * 3, config.adaptiveTimeoutMaxMs));
+                    Math.min(newAvg * 3, config.adaptiveTimeoutMaxMs));
             adaptiveTimeoutMs.set(newTimeout);
 
             // 恢复健康
@@ -400,9 +412,9 @@ public class ConnectionManager {
     private NodeInfo findNode(String nodeId) {
         if (nodeId == null) return null;
         return nodes.stream()
-            .filter(n -> n.id.equals(nodeId))
-            .findFirst()
-            .orElse(null);
+                .filter(n -> n.id.equals(nodeId))
+                .findFirst()
+                .orElse(null);
     }
 
     /**
