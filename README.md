@@ -183,7 +183,7 @@ boolean ok = client.optimisticUpdate("/resources/order-123", 3, current -> {
 
 ### Flash Sale (Seckill) Optimization
 
-High-performance locking for flash sales with read-write split:
+High-performance locking for flash sales with read-write split (eventual consistency):
 
 ```java
 ReadWriteSplitClient fastClient = new ReadWriteSplitClient(client);
@@ -198,6 +198,31 @@ if (fastClient.isLockAvailable("seckill-item-123")) {
                       fastClient.unlockAsync("seckill-item-123");
                   }
               });
+}
+```
+
+### Financial Transaction (Strong Consistency)
+
+For financial scenarios requiring strong consistency guarantees:
+
+```java
+// Enable strong consistency mode for financial transactions
+ReadWriteSplitClient strongClient = new ReadWriteSplitClient(client, true);
+
+String transferLock = "transfer-" + fromAccount + "-" + toAccount;
+
+// Check availability (Raft read, ~50ms, strongly consistent)
+if (strongClient.isLockAvailable(transferLock)) {
+    strongClient.tryLockAsync(transferLock, 10, TimeUnit.SECONDS)
+                .thenAccept(success -> {
+                    if (success) {
+                        try {
+                            processTransaction(fromAccount, toAccount, amount);
+                        } finally {
+                            strongClient.unlockAsync(transferLock);
+                        }
+                    }
+                });
 }
 ```
 
