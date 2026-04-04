@@ -51,12 +51,12 @@ public class HeartbeatMonitor {
 
     /** 配置 */
     public static class Config {
-        long intervalMs = 9_000;            // 心跳间隔
-        long timeoutMs = 3_000;             // 心跳超时
-        int warningThreshold = 2;           // 2 次失败进入警告
-        int criticalThreshold = 3;          // 3 次失败进入危急
-        long sessionTtlMs = 30_000;         // 会话 TTL
-        double preemptiveRenewRatio = 0.7;  // 提前续期比例（70% TTL 时触发）
+        public long intervalMs = 9_000;            // 心跳间隔
+        public long timeoutMs = 3_000;             // 心跳超时
+        public int warningThreshold = 2;           // 2 次失败进入警告
+        public int criticalThreshold = 3;          // 3 次失败进入危急
+        public long sessionTtlMs = 30_000;         // 会话 TTL
+        public double preemptiveRenewRatio = 0.7;  // 提前续期比例（70% TTL 时触发）
     }
 
     private final Config config;

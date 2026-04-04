@@ -51,14 +51,14 @@ public class RetryPolicy {
 
     /** 配置 */
     public static class Config {
-        int maxAttempts = 3;
-        long initialDelayMs = 100;
-        long maxDelayMs = 5_000;
-        double backoffMultiplier = 2.0;
-        boolean exponentialBackoff = true;
+        public int maxAttempts = 3;
+        public long initialDelayMs = 100;
+        public long maxDelayMs = 5_000;
+        public double backoffMultiplier = 2.0;
+        public boolean exponentialBackoff = true;
 
         // 可重试的错误
-        Set<String> retryableErrors = new HashSet<>(Arrays.asList(
+        public Set<String> retryableErrors = new HashSet<>(Arrays.asList(
             "PROPOSE_TIMEOUT",
             "LEADER_CHANGED",
             "CONNECTION_FAILED",
@@ -67,7 +67,7 @@ public class RetryPolicy {
         ));
 
         // 不可重试的错误
-        Set<String> nonRetryableErrors = new HashSet<>(Arrays.asList(
+        public Set<String> nonRetryableErrors = new HashSet<>(Arrays.asList(
             "LOCK_NOT_HELD",
             "SESSION_EXPIRED",
             "INVALID_COMMAND",

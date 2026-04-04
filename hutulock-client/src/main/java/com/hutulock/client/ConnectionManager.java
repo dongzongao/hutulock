@@ -62,15 +62,15 @@ public class ConnectionManager {
 
     /** 节点信息 */
     public static class NodeInfo {
-        final String id;
-        final String host;
-        final int port;
-        volatile NodeHealth health = NodeHealth.UNKNOWN;
-        volatile long lastSuccessTime;
-        volatile long lastFailureTime;
-        final AtomicInteger consecutiveFailures = new AtomicInteger(0);
-        final AtomicInteger consecutiveSuccesses = new AtomicInteger(0);
-        final AtomicLong avgLatencyMs = new AtomicLong(0);
+        public final String id;
+        public final String host;
+        public final int port;
+        public volatile NodeHealth health = NodeHealth.UNKNOWN;
+        public volatile long lastSuccessTime;
+        public volatile long lastFailureTime;
+        public final AtomicInteger consecutiveFailures = new AtomicInteger(0);
+        public final AtomicInteger consecutiveSuccesses = new AtomicInteger(0);
+        public final AtomicLong avgLatencyMs = new AtomicLong(0);
 
         public NodeInfo(String id, String host, int port) {
             this.id = id;
@@ -87,21 +87,21 @@ public class ConnectionManager {
 
     /** 配置 */
     public static class Config {
-        int maxReconnectAttempts = 5;
-        long initialReconnectDelayMs = 100;
-        long maxReconnectDelayMs = 30_000;
-        double reconnectBackoffMultiplier = 2.0;
+        public int maxReconnectAttempts = 5;
+        public long initialReconnectDelayMs = 100;
+        public long maxReconnectDelayMs = 30_000;
+        public double reconnectBackoffMultiplier = 2.0;
 
-        int unhealthyThreshold = 3;      // 连续失败 3 次标记为不健康
-        int healthyThreshold = 2;        // 连续成功 2 次恢复健康
-        long healthCheckIntervalMs = 10_000;  // 健康检查间隔
+        public int unhealthyThreshold = 3;      // 连续失败 3 次标记为不健康
+        public int healthyThreshold = 2;        // 连续成功 2 次恢复健康
+        public long healthCheckIntervalMs = 10_000;  // 健康检查间隔
 
-        long adaptiveTimeoutMinMs = 1_000;
-        long adaptiveTimeoutMaxMs = 30_000;
-        int connectTimeoutMs = 3_000;
-        int maxFrameLength = 4096;
+        public long adaptiveTimeoutMinMs = 1_000;
+        public long adaptiveTimeoutMaxMs = 30_000;
+        public int connectTimeoutMs = 3_000;
+        public int maxFrameLength = 4096;
 
-        long circuitBreakerTimeoutMs = 30_000;  // 熔断 30s 后尝试恢复
+        public long circuitBreakerTimeoutMs = 30_000;  // 熔断 30s 后尝试恢复
     }
 
     private final Config config;
