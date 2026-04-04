@@ -27,6 +27,14 @@ logs/
 # Runtime
 *.pid
 
+# Benchmark temporary files
+BenchmarkRunner.java
+BenchmarkRunner.class
+benchmark-results.json
+generate_charts.py
+generate_placeholder_chart.py
+node*.log
+
 # Code analysis
 qodana.sarif.json
 qodana.yaml

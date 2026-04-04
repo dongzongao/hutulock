@@ -260,6 +260,14 @@ Prometheus metrics: `http://localhost:9090/metrics`
 
 ## 🔥 Performance Benchmark
 
+[![Benchmark Status](https://github.com/dongzongao/hutulock/actions/workflows/performance-benchmark.yml/badge.svg)](https://github.com/dongzongao/hutulock/actions/workflows/performance-benchmark.yml)
+
+### Automated Performance Testing
+
+Every commit triggers automated performance tests on a 3-node cluster. Results are tracked over time to ensure consistent performance.
+
+![Performance Chart](docs/benchmark-chart.png)
+
 ### Quick Benchmark
 
 ```bash
@@ -273,7 +281,7 @@ Prometheus metrics: `http://localhost:9090/metrics`
 ./bin/benchmark.sh mixed 50 120
 ```
 
-### Performance Results
+### Latest Performance Results
 
 | Test Scenario | Threads | QPS | P50 Latency | P99 Latency |
 |:--------------|:-------:|----:|------------:|------------:|
@@ -286,6 +294,8 @@ Prometheus metrics: `http://localhost:9090/metrics`
 - Read QPS: 5,000 → 1,000,000+ (200x)
 - Write QPS: 5,000 → 100,000+ (20x)
 - P99 Latency (read): 50ms → <1ms (50x)
+
+View detailed historical trends in [benchmark history](docs/benchmark-history.json)
 
 📖 [Benchmark Guide](docs/benchmark-guide.md) | 🚀 [Seckill Optimization](docs/seckill-optimization.md)
 
