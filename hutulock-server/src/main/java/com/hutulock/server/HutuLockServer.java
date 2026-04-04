@@ -15,6 +15,7 @@
  */
 package com.hutulock.server;
 
+// Performance benchmark: automated testing on every commit
 import com.hutulock.config.api.ConfigProvider;
 import com.hutulock.config.api.ServerProperties;
 import com.hutulock.config.impl.YamlConfigProvider;
