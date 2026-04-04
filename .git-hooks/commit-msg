@@ -1,0 +1,26 @@
+#!/bin/bash
+# Git hook to prevent SEO-related keywords in commit messages
+
+COMMIT_MSG_FILE=$1
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Check for SEO-related keywords (case insensitive)
+if echo "$COMMIT_MSG" | grep -iE '(seo|搜索引擎优化|关键词优化|keyword optimization)' > /dev/null; then
+    echo ""
+    echo "❌ 错误：提交信息中不允许包含 SEO 相关词语"
+    echo ""
+    echo "禁止使用的词语："
+    echo "  - seo / SEO"
+    echo "  - 搜索引擎优化"
+    echo "  - 关键词优化"
+    echo "  - keyword optimization"
+    echo ""
+    echo "请使用技术性描述，例如："
+    echo "  ✅ docs: 优化项目描述"
+    echo "  ✅ docs: 更新性能数据"
+    echo "  ✅ docs: 改进技术文档"
+    echo ""
+    exit 1
+fi
+
+exit 0
