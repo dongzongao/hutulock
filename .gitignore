@@ -39,6 +39,7 @@ hutulock-admin/ui/node_modules/
 *_STATUS.md
 *_CHECKLIST.md
 *_ACTION_ITEMS.md
+*_INTERNAL.md
 KEYWORDS.md
 SEO_*.md
 WORK_*.md
@@ -46,3 +47,4 @@ PROJECT_*.md
 COMPLETION_*.md
 .github/INITIAL_ISSUES.md
 .github/TOPICS.md
+GITHUB_TOPICS_INTERNAL.md
