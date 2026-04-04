@@ -44,6 +44,8 @@ public enum CommandType {
     GET_DATA(2, 2),
     /** SET_DATA <path> <expectedVersion> <base64data> <sessionId> */
     SET_DATA(4, 4),
+    /** IS_LOCK_AVAILABLE <lockName> <sessionId> */
+    IS_LOCK_AVAILABLE(2, 2),
 
     // ---- 服务端响应 ----
     /** CONNECTED <sessionId> */
