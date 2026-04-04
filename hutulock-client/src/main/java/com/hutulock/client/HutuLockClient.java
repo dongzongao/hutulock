@@ -356,8 +356,7 @@ public class HutuLockClient implements AutoCloseable {
      */
     public void unlock(LockContext ctx) throws Exception {
         ctx.stopWatchdog();
-        heldContexts.remove(ctx.getLockName());
-
+        
         CompletableFuture<Message> future =
             handler.registerRequest("UNLOCK:" + ctx.getLockName());
         channel.writeAndFlush(
@@ -366,9 +365,12 @@ public class HutuLockClient implements AutoCloseable {
         try {
             future.get(10, TimeUnit.SECONDS);
             ctx.markReleased();
+            heldContexts.remove(ctx.getLockName());  // 🟠 修复 7: 成功后才移除
             log.info("Lock released: {}", ctx.getLockName());
         } catch (TimeoutException e) {
             log.warn("Unlock timeout for [{}], session expiry will clean up", ctx.getLockName());
+            ctx.markExpired();  // 🟠 修复 7: 标记为过期
+            heldContexts.remove(ctx.getLockName());
         }
     }
 
@@ -394,7 +396,15 @@ public class HutuLockClient implements AutoCloseable {
         // Response: DATA <path> <version> <base64-data>
         int version = Integer.parseInt(resp.arg(1));
         byte[] data = resp.optArg(2)
-            .map(s -> java.util.Base64.getDecoder().decode(s))
+            .map(s -> {
+                try {
+                    return java.util.Base64.getDecoder().decode(s);
+                } catch (IllegalArgumentException e) {
+                    // 🔴 修复 3: 捕获非法 Base64 输入，防止客户端崩溃
+                    log.error("Invalid Base64 data from server for path: {}, data: {}", path, s, e);
+                    return new byte[0];  // 安全降级
+                }
+            })
             .orElse(new byte[0]);
         return new VersionedData(path, data, version);
     }
@@ -457,7 +467,11 @@ public class HutuLockClient implements AutoCloseable {
 
             if (attempt < maxRetries) {
                 log.debug("Version conflict on {}, retry {}/{}", path, attempt + 1, maxRetries);
-                Thread.sleep(10L * (1 << Math.min(attempt, 5))); // exponential backoff
+                // 🟠 修复 5: 增加最大延迟到 5 秒，添加随机抖动
+                long baseDelay = 10L * (1 << Math.min(attempt, 9));  // 最大 5120ms
+                long jitter = java.util.concurrent.ThreadLocalRandom.current()
+                    .nextLong(baseDelay / 2);
+                Thread.sleep(baseDelay + jitter);
             }
         }
         log.warn("optimisticUpdate failed after {} retries on {}", maxRetries, path);
@@ -468,14 +482,19 @@ public class HutuLockClient implements AutoCloseable {
 
     private synchronized void handleRedirect(String leaderId) {
         log.info("Redirected to leader: {}, reconnecting...", leaderId);
+        String oldSessionId = this.sessionId;  // 🔴 修复 2: 保存旧值
         try {
             if (channel != null) channel.close().sync();
             List<String[]> shuffled = new ArrayList<>(nodes);
             Collections.shuffle(shuffled);
             connectToAny(shuffled);
-            this.sessionId = establishSession(this.sessionId);
+            this.sessionId = establishSession(oldSessionId);  // 原子更新
+            log.info("Reconnected successfully with sessionId: {}", this.sessionId);
         } catch (Exception e) {
             log.error("Reconnect failed", e);
+            // 🔴 修复 2: 恢复旧 sessionId，避免其他线程读取到 null
+            this.sessionId = oldSessionId;
+            throw new RuntimeException("Reconnect failed, keeping old session", e);
         }
     }
 
@@ -483,7 +502,10 @@ public class HutuLockClient implements AutoCloseable {
 
     @Override
     public void close() {
+        // 停止所有看门狗
         heldContexts.values().forEach(LockContext::stopWatchdog);
+        
+        // 关闭看门狗调度器
         watchdogScheduler.shutdown();
         try {
             if (!watchdogScheduler.awaitTermination(3, TimeUnit.SECONDS)) {
@@ -493,8 +515,31 @@ public class HutuLockClient implements AutoCloseable {
             watchdogScheduler.shutdownNow();
             Thread.currentThread().interrupt();
         }
-        if (channel != null) channel.close();
-        group.shutdownGracefully(0, 3, TimeUnit.SECONDS);
+        
+        // 🟠 修复 4: 等待 channel 关闭完成
+        if (channel != null) {
+            try {
+                channel.close().sync();
+                log.debug("Channel closed successfully");
+            } catch (InterruptedException e) {
+                log.warn("Interrupted while closing channel");
+                Thread.currentThread().interrupt();
+            }
+        }
+        
+        // 关闭连接管理器
+        if (connectionManager != null) {
+            connectionManager.close();
+        }
+        
+        // 🟠 修复 4: 等待 EventLoopGroup 关闭完成
+        try {
+            group.shutdownGracefully(0, 3, TimeUnit.SECONDS).sync();
+            log.debug("EventLoopGroup shut down successfully");
+        } catch (InterruptedException e) {
+            log.warn("Interrupted while shutting down EventLoopGroup");
+            Thread.currentThread().interrupt();
+        }
     }
 
     private LockContext defaultContext(String lockName) {
@@ -514,10 +559,23 @@ public class HutuLockClient implements AutoCloseable {
         private ClientProperties config = ClientProperties.defaults();
         private final List<String[]> nodes = new ArrayList<>();
 
-        public Builder config(ClientProperties config) { this.config = config; return this; }
+        public Builder config(ClientProperties config) { 
+            if (config == null) {
+                throw new IllegalArgumentException("config cannot be null");
+            }
+            this.config = config; 
+            return this; 
+        }
 
         public Builder addNode(String host, int port) {
-            nodes.add(new String[]{host, String.valueOf(port)});
+            // 🟡 修复 11: 添加输入验证
+            if (host == null || host.trim().isEmpty()) {
+                throw new IllegalArgumentException("host cannot be null or empty");
+            }
+            if (port < 1 || port > 65535) {
+                throw new IllegalArgumentException("port must be between 1 and 65535, got: " + port);
+            }
+            nodes.add(new String[]{host.trim(), String.valueOf(port)});
             return this;
         }
 

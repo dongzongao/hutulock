@@ -197,10 +197,32 @@ public class LockClientHandler extends SimpleChannelInboundHandler<String> {
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
         log.warn("Connection lost");
+        
+        // 清理所有待处理的请求
         pendingRequests.forEach((k, pending) ->
             pending.future.completeExceptionally(new RuntimeException("connection lost")));
         pendingRequests.clear();
         pendingOrder.clear();
+        
+        // 🔴 修复 1: 清理所有 Watcher，防止内存泄漏
+        // 触发所有未完成的 Watcher，通知它们会话已过期
+        int watcherCount = watcherCallbacks.size();
+        watcherCallbacks.forEach((path, callback) -> {
+            try {
+                // 创建 SESSION_EXPIRED 事件通知 Watcher
+                WatchEvent expiredEvent = new WatchEvent(
+                    WatchEvent.Type.SESSION_EXPIRED, 
+                    com.hutulock.model.znode.ZNodePath.of(path)
+                );
+                callback.accept(expiredEvent);
+            } catch (Exception e) {
+                log.error("Error notifying watcher for path: {}", path, e);
+            }
+        });
+        watcherCallbacks.clear();
+        if (watcherCount > 0) {
+            log.debug("Cleared {} pending watchers", watcherCount);
+        }
     }
 
     @Override
