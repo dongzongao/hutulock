@@ -85,9 +85,9 @@ public final class WatchEvent {
         Type type = Type.valueOf(line.substring(i1 + 1, i2));
         String pathStr = line.substring(i2 + 1).trim();
         
-        // 特殊处理 SESSION_EXPIRED：路径可能为空，使用 ROOT 作为占位符
+        // 特殊处理 SESSION_EXPIRED：路径可能为空或为 "/"，使用 ROOT 作为占位符
         ZNodePath path;
-        if (type == Type.SESSION_EXPIRED && pathStr.isEmpty()) {
+        if (type == Type.SESSION_EXPIRED && (pathStr.isEmpty() || pathStr.equals("/"))) {
             path = ZNodePath.ROOT;
         } else {
             path = ZNodePath.of(pathStr);
