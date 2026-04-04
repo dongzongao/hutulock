@@ -82,8 +82,17 @@ public final class WatchEvent {
         if (i1 < 0 || i2 < 0) {
             throw new IllegalArgumentException("Malformed WatchEvent: " + line);
         }
-        Type      type = Type.valueOf(line.substring(i1 + 1, i2));
-        ZNodePath path = ZNodePath.of(line.substring(i2 + 1).trim());
+        Type type = Type.valueOf(line.substring(i1 + 1, i2));
+        String pathStr = line.substring(i2 + 1).trim();
+        
+        // 特殊处理 SESSION_EXPIRED：路径可能为空，使用 ROOT 作为占位符
+        ZNodePath path;
+        if (type == Type.SESSION_EXPIRED && pathStr.isEmpty()) {
+            path = ZNodePath.ROOT;
+        } else {
+            path = ZNodePath.of(pathStr);
+        }
+        
         return new WatchEvent(type, path);
     }
 
