@@ -22,6 +22,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 增强版客户端使用示例 - 展示容错特性
