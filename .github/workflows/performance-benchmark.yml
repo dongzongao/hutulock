@@ -54,164 +54,160 @@ jobs:
         # Check if nodes are running
         ps aux | grep hutulock-server || true
     
-    - name: Run benchmark tests
+    - name: Create benchmark runner
       run: |
-        # Create benchmark runner
-        cat > BenchmarkRunner.java << 'EOF'
-import com.hutulock.client.HutuLockClient;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.*;
-import java.io.*;
-import java.time.*;
-import java.util.*;
-
-public class BenchmarkRunner {
-    public static void main(String[] args) throws Exception {
-        HutuLockClient client = HutuLockClient.builder()
-            .addNode("127.0.0.1", 8881)
-            .addNode("127.0.0.1", 8882)
-            .addNode("127.0.0.1", 8883)
-            .build();
-        client.connect();
+        cat > BenchmarkRunner.java << 'JAVAEOF'
+        import com.hutulock.client.HutuLockClient;
+        import java.util.concurrent.*;
+        import java.util.concurrent.atomic.*;
+        import java.io.*;
+        import java.time.*;
+        import java.util.*;
         
-        Map<String, Object> results = new LinkedHashMap<>();
-        results.put("timestamp", Instant.now().toString());
-        results.put("commit", System.getenv("GITHUB_SHA"));
-        
-        // Test 1: Read-only (100 threads, 30s)
-        System.out.println("Running read-only test...");
-        Map<String, Object> readTest = runTest(client, 100, 30, "read");
-        results.put("read_test", readTest);
-        
-        // Test 2: Write-only (50 threads, 30s)
-        System.out.println("Running write-only test...");
-        Map<String, Object> writeTest = runTest(client, 50, 30, "write");
-        results.put("write_test", writeTest);
-        
-        // Test 3: Mixed 9:1 (100 threads, 30s)
-        System.out.println("Running mixed test...");
-        Map<String, Object> mixedTest = runTest(client, 100, 30, "mixed");
-        results.put("mixed_test", mixedTest);
-        
-        client.close();
-        
-        // Write JSON results
-        writeJson(results, "benchmark-results.json");
-        System.out.println("Benchmark completed!");
-    }
-    
-    static Map<String, Object> runTest(HutuLockClient client, int threads, int seconds, String type) throws Exception {
-        ExecutorService executor = Executors.newFixedThreadPool(threads);
-        AtomicLong successCount = new AtomicLong(0);
-        AtomicLong failCount = new AtomicLong(0);
-        List<Long> latencies = new CopyOnWriteArrayList<>();
-        
-        long startTime = System.currentTimeMillis();
-        long endTime = startTime + seconds * 1000L;
-        
-        for (int i = 0; i < threads; i++) {
-            final int threadId = i;
-            executor.submit(() -> {
-                while (System.currentTimeMillis() < endTime) {
-                    String lockName = "bench-lock-" + (threadId % 10);
-                    long start = System.nanoTime();
-                    try {
-                        if ("read".equals(type)) {
-                            client.exists("/" + lockName);
-                        } else if ("write".equals(type)) {
-                            if (client.tryLock(lockName, 5, TimeUnit.SECONDS)) {
-                                client.unlock(lockName);
-                            }
-                        } else {
-                            if (Math.random() < 0.9) {
-                                client.exists("/" + lockName);
-                            } else {
-                                if (client.tryLock(lockName, 5, TimeUnit.SECONDS)) {
-                                    client.unlock(lockName);
+        public class BenchmarkRunner {
+            public static void main(String[] args) throws Exception {
+                HutuLockClient client = HutuLockClient.builder()
+                    .addNode("127.0.0.1", 8881)
+                    .addNode("127.0.0.1", 8882)
+                    .addNode("127.0.0.1", 8883)
+                    .build();
+                client.connect();
+                
+                Map<String, Object> results = new LinkedHashMap<>();
+                results.put("timestamp", Instant.now().toString());
+                results.put("commit", System.getenv("GITHUB_SHA"));
+                
+                System.out.println("Running read-only test...");
+                Map<String, Object> readTest = runTest(client, 100, 30, "read");
+                results.put("read_test", readTest);
+                
+                System.out.println("Running write-only test...");
+                Map<String, Object> writeTest = runTest(client, 50, 30, "write");
+                results.put("write_test", writeTest);
+                
+                System.out.println("Running mixed test...");
+                Map<String, Object> mixedTest = runTest(client, 100, 30, "mixed");
+                results.put("mixed_test", mixedTest);
+                
+                client.close();
+                
+                writeJson(results, "benchmark-results.json");
+                System.out.println("Benchmark completed!");
+            }
+            
+            static Map<String, Object> runTest(HutuLockClient client, int threads, int seconds, String type) throws Exception {
+                ExecutorService executor = Executors.newFixedThreadPool(threads);
+                AtomicLong successCount = new AtomicLong(0);
+                AtomicLong failCount = new AtomicLong(0);
+                List<Long> latencies = new CopyOnWriteArrayList<>();
+                
+                long startTime = System.currentTimeMillis();
+                long endTime = startTime + seconds * 1000L;
+                
+                for (int i = 0; i < threads; i++) {
+                    final int threadId = i;
+                    executor.submit(() -> {
+                        while (System.currentTimeMillis() < endTime) {
+                            String lockName = "bench-lock-" + (threadId % 10);
+                            long start = System.nanoTime();
+                            try {
+                                if ("read".equals(type)) {
+                                    client.exists("/" + lockName);
+                                } else if ("write".equals(type)) {
+                                    if (client.tryLock(lockName, 5, TimeUnit.SECONDS)) {
+                                        client.unlock(lockName);
+                                    }
+                                } else {
+                                    if (Math.random() < 0.9) {
+                                        client.exists("/" + lockName);
+                                    } else {
+                                        if (client.tryLock(lockName, 5, TimeUnit.SECONDS)) {
+                                            client.unlock(lockName);
+                                        }
+                                    }
                                 }
+                                long latency = (System.nanoTime() - start) / 1000;
+                                latencies.add(latency);
+                                successCount.incrementAndGet();
+                            } catch (Exception e) {
+                                failCount.incrementAndGet();
                             }
                         }
-                        long latency = (System.nanoTime() - start) / 1000; // microseconds
-                        latencies.add(latency);
-                        successCount.incrementAndGet();
-                    } catch (Exception e) {
-                        failCount.incrementAndGet();
+                    });
+                }
+                
+                executor.shutdown();
+                executor.awaitTermination(seconds + 10, TimeUnit.SECONDS);
+                
+                long duration = System.currentTimeMillis() - startTime;
+                long total = successCount.get();
+                double qps = total * 1000.0 / duration;
+                
+                Collections.sort(latencies);
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("threads", threads);
+                result.put("duration_ms", duration);
+                result.put("total_ops", total);
+                result.put("failed_ops", failCount.get());
+                result.put("qps", Math.round(qps));
+                result.put("p50_latency_us", getPercentile(latencies, 0.50));
+                result.put("p95_latency_us", getPercentile(latencies, 0.95));
+                result.put("p99_latency_us", getPercentile(latencies, 0.99));
+                result.put("p999_latency_us", getPercentile(latencies, 0.999));
+                
+                return result;
+            }
+            
+            static long getPercentile(List<Long> sorted, double percentile) {
+                if (sorted.isEmpty()) return 0;
+                int index = (int) Math.ceil(percentile * sorted.size()) - 1;
+                return sorted.get(Math.max(0, Math.min(index, sorted.size() - 1)));
+            }
+            
+            static void writeJson(Map<String, Object> data, String filename) throws Exception {
+                StringBuilder json = new StringBuilder("{\n");
+                boolean first = true;
+                for (Map.Entry<String, Object> entry : data.entrySet()) {
+                    if (!first) json.append(",\n");
+                    first = false;
+                    json.append("  \"").append(entry.getKey()).append("\": ");
+                    if (entry.getValue() instanceof Map) {
+                        json.append(mapToJson((Map<String, Object>) entry.getValue(), 2));
+                    } else if (entry.getValue() instanceof String) {
+                        json.append("\"").append(entry.getValue()).append("\"");
+                    } else {
+                        json.append(entry.getValue());
                     }
                 }
-            });
-        }
-        
-        executor.shutdown();
-        executor.awaitTermination(seconds + 10, TimeUnit.SECONDS);
-        
-        long duration = System.currentTimeMillis() - startTime;
-        long total = successCount.get();
-        double qps = total * 1000.0 / duration;
-        
-        Collections.sort(latencies);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("threads", threads);
-        result.put("duration_ms", duration);
-        result.put("total_ops", total);
-        result.put("failed_ops", failCount.get());
-        result.put("qps", Math.round(qps));
-        result.put("p50_latency_us", getPercentile(latencies, 0.50));
-        result.put("p95_latency_us", getPercentile(latencies, 0.95));
-        result.put("p99_latency_us", getPercentile(latencies, 0.99));
-        result.put("p999_latency_us", getPercentile(latencies, 0.999));
-        
-        return result;
-    }
-    
-    static long getPercentile(List<Long> sorted, double percentile) {
-        if (sorted.isEmpty()) return 0;
-        int index = (int) Math.ceil(percentile * sorted.size()) - 1;
-        return sorted.get(Math.max(0, Math.min(index, sorted.size() - 1)));
-    }
-    
-    static void writeJson(Map<String, Object> data, String filename) throws Exception {
-        StringBuilder json = new StringBuilder("{\n");
-        boolean first = true;
-        for (Map.Entry<String, Object> entry : data.entrySet()) {
-            if (!first) json.append(",\n");
-            first = false;
-            json.append("  \"").append(entry.getKey()).append("\": ");
-            if (entry.getValue() instanceof Map) {
-                json.append(mapToJson((Map<String, Object>) entry.getValue(), 2));
-            } else if (entry.getValue() instanceof String) {
-                json.append("\"").append(entry.getValue()).append("\"");
-            } else {
-                json.append(entry.getValue());
+                json.append("\n}");
+                
+                try (FileWriter writer = new FileWriter(filename)) {
+                    writer.write(json.toString());
+                }
+            }
+            
+            static String mapToJson(Map<String, Object> map, int indent) {
+                StringBuilder json = new StringBuilder("{\n");
+                String indentStr = "  ".repeat(indent);
+                boolean first = true;
+                for (Map.Entry<String, Object> entry : map.entrySet()) {
+                    if (!first) json.append(",\n");
+                    first = false;
+                    json.append(indentStr).append("  \"").append(entry.getKey()).append("\": ");
+                    if (entry.getValue() instanceof String) {
+                        json.append("\"").append(entry.getValue()).append("\"");
+                    } else {
+                        json.append(entry.getValue());
+                    }
+                }
+                json.append("\n").append(indentStr).append("}");
+                return json.toString();
             }
         }
-        json.append("\n}");
-        
-        try (FileWriter writer = new FileWriter(filename)) {
-            writer.write(json.toString());
-        }
-    }
+        JAVAEOF
     
-    static String mapToJson(Map<String, Object> map, int indent) {
-        StringBuilder json = new StringBuilder("{\n");
-        String indentStr = "  ".repeat(indent);
-        boolean first = true;
-        for (Map.Entry<String, Object> entry : map.entrySet()) {
-            if (!first) json.append(",\n");
-            first = false;
-            json.append(indentStr).append("  \"").append(entry.getKey()).append("\": ");
-            if (entry.getValue() instanceof String) {
-                json.append("\"").append(entry.getValue()).append("\"");
-            } else {
-                json.append(entry.getValue());
-            }
-        }
-        json.append("\n").append(indentStr).append("}");
-        return json.toString();
-    }
-}
-EOF
-        
-        # Compile and run
+    - name: Run benchmark
+      run: |
         javac -cp "hutulock-client/target/*:hutulock-model/target/*" BenchmarkRunner.java
         java -cp ".:hutulock-client/target/*:hutulock-model/target/*:hutulock-server/target/lib/*" BenchmarkRunner
     
@@ -223,139 +219,122 @@ EOF
         kill $(cat node3.pid) || true
         sleep 5
     
+    - name: Install Python dependencies
+      run: pip install matplotlib pandas
+    
     - name: Generate performance charts
       run: |
-        # Install Python for chart generation
-        pip install matplotlib pandas
+        python3 << 'PYEOF'
+        import json
+        import matplotlib.pyplot as plt
+        import matplotlib
+        matplotlib.use('Agg')
+        import os
         
-        # Create chart generator
-        cat > generate_charts.py << 'EOF'
-import json
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')
-import os
-from datetime import datetime
-
-# Read current results
-with open('benchmark-results.json', 'r') as f:
-    current = json.load(f)
-
-# Read historical results
-history_file = 'docs/benchmark-history.json'
-if os.path.exists(history_file):
-    with open(history_file, 'r') as f:
-        history = json.load(f)
-else:
-    history = []
-
-# Append current to history
-history.append(current)
-
-# Keep last 50 results
-history = history[-50:]
-
-# Save updated history
-with open(history_file, 'w') as f:
-    json.dump(history, f, indent=2)
-
-# Generate charts
-fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-fig.suptitle('HutuLock Performance Benchmark', fontsize=16, fontweight='bold')
-
-# Extract data
-timestamps = [h.get('timestamp', '')[:10] for h in history]
-read_qps = [h.get('read_test', {}).get('qps', 0) for h in history]
-write_qps = [h.get('write_test', {}).get('qps', 0) for h in history]
-mixed_qps = [h.get('mixed_test', {}).get('qps', 0) for h in history]
-
-read_p99 = [h.get('read_test', {}).get('p99_latency_us', 0) / 1000 for h in history]
-write_p99 = [h.get('write_test', {}).get('p99_latency_us', 0) / 1000 for h in history]
-mixed_p99 = [h.get('mixed_test', {}).get('p99_latency_us', 0) / 1000 for h in history]
-
-# Chart 1: QPS Trends
-ax1 = axes[0, 0]
-ax1.plot(read_qps, 'o-', label='Read', linewidth=2, markersize=6)
-ax1.plot(write_qps, 's-', label='Write', linewidth=2, markersize=6)
-ax1.plot(mixed_qps, '^-', label='Mixed (9:1)', linewidth=2, markersize=6)
-ax1.set_title('QPS Trends', fontweight='bold')
-ax1.set_xlabel('Build Number')
-ax1.set_ylabel('QPS')
-ax1.legend()
-ax1.grid(True, alpha=0.3)
-ax1.ticklabel_format(style='plain', axis='y')
-
-# Chart 2: P99 Latency Trends
-ax2 = axes[0, 1]
-ax2.plot(read_p99, 'o-', label='Read', linewidth=2, markersize=6)
-ax2.plot(write_p99, 's-', label='Write', linewidth=2, markersize=6)
-ax2.plot(mixed_p99, '^-', label='Mixed (9:1)', linewidth=2, markersize=6)
-ax2.set_title('P99 Latency Trends', fontweight='bold')
-ax2.set_xlabel('Build Number')
-ax2.set_ylabel('Latency (ms)')
-ax2.legend()
-ax2.grid(True, alpha=0.3)
-
-# Chart 3: Latest QPS Comparison
-ax3 = axes[1, 0]
-categories = ['Read', 'Write', 'Mixed\n(9:1)']
-latest_qps = [read_qps[-1], write_qps[-1], mixed_qps[-1]]
-bars = ax3.bar(categories, latest_qps, color=['#2ecc71', '#e74c3c', '#3498db'])
-ax3.set_title('Latest QPS Comparison', fontweight='bold')
-ax3.set_ylabel('QPS')
-ax3.ticklabel_format(style='plain', axis='y')
-for bar in bars:
-    height = bar.get_height()
-    ax3.text(bar.get_x() + bar.get_width()/2., height,
-             f'{int(height):,}', ha='center', va='bottom', fontweight='bold')
-
-# Chart 4: Latest Latency Distribution
-ax4 = axes[1, 1]
-latest = history[-1]
-read_latencies = [
-    latest['read_test']['p50_latency_us'] / 1000,
-    latest['read_test']['p95_latency_us'] / 1000,
-    latest['read_test']['p99_latency_us'] / 1000,
-    latest['read_test']['p999_latency_us'] / 1000
-]
-write_latencies = [
-    latest['write_test']['p50_latency_us'] / 1000,
-    latest['write_test']['p95_latency_us'] / 1000,
-    latest['write_test']['p99_latency_us'] / 1000,
-    latest['write_test']['p999_latency_us'] / 1000
-]
-x = range(4)
-width = 0.35
-ax4.bar([i - width/2 for i in x], read_latencies, width, label='Read', color='#2ecc71')
-ax4.bar([i + width/2 for i in x], write_latencies, width, label='Write', color='#e74c3c')
-ax4.set_title('Latest Latency Distribution', fontweight='bold')
-ax4.set_ylabel('Latency (ms)')
-ax4.set_xticks(x)
-ax4.set_xticklabels(['P50', 'P95', 'P99', 'P999'])
-ax4.legend()
-ax4.grid(True, alpha=0.3, axis='y')
-
-plt.tight_layout()
-plt.savefig('docs/benchmark-chart.png', dpi=150, bbox_inches='tight')
-print("Chart generated: docs/benchmark-chart.png")
-
-# Generate badge data
-badge_data = {
-    "schemaVersion": 1,
-    "label": "QPS",
-    "message": f"Read: {int(read_qps[-1]):,} | Write: {int(write_qps[-1]):,}",
-    "color": "brightgreen"
-}
-with open('docs/benchmark-badge.json', 'w') as f:
-    json.dump(badge_data, f)
-
-print(f"Latest results:")
-print(f"  Read QPS: {int(read_qps[-1]):,}")
-print(f"  Write QPS: {int(write_qps[-1]):,}")
-print(f"  Mixed QPS: {int(mixed_qps[-1]):,}")
-EOF
+        with open('benchmark-results.json', 'r') as f:
+            current = json.load(f)
         
-        python generate_charts.py
+        history_file = 'docs/benchmark-history.json'
+        if os.path.exists(history_file):
+            with open(history_file, 'r') as f:
+                history = json.load(f)
+        else:
+            history = []
+        
+        history.append(current)
+        history = history[-50:]
+        
+        with open(history_file, 'w') as f:
+            json.dump(history, f, indent=2)
+        
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig.suptitle('HutuLock Performance Benchmark', fontsize=16, fontweight='bold')
+        
+        timestamps = [h.get('timestamp', '')[:10] for h in history]
+        read_qps = [h.get('read_test', {}).get('qps', 0) for h in history]
+        write_qps = [h.get('write_test', {}).get('qps', 0) for h in history]
+        mixed_qps = [h.get('mixed_test', {}).get('qps', 0) for h in history]
+        
+        read_p99 = [h.get('read_test', {}).get('p99_latency_us', 0) / 1000 for h in history]
+        write_p99 = [h.get('write_test', {}).get('p99_latency_us', 0) / 1000 for h in history]
+        mixed_p99 = [h.get('mixed_test', {}).get('p99_latency_us', 0) / 1000 for h in history]
+        
+        ax1 = axes[0, 0]
+        ax1.plot(read_qps, 'o-', label='Read', linewidth=2, markersize=6)
+        ax1.plot(write_qps, 's-', label='Write', linewidth=2, markersize=6)
+        ax1.plot(mixed_qps, '^-', label='Mixed (9:1)', linewidth=2, markersize=6)
+        ax1.set_title('QPS Trends', fontweight='bold')
+        ax1.set_xlabel('Build Number')
+        ax1.set_ylabel('QPS')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        ax1.ticklabel_format(style='plain', axis='y')
+        
+        ax2 = axes[0, 1]
+        ax2.plot(read_p99, 'o-', label='Read', linewidth=2, markersize=6)
+        ax2.plot(write_p99, 's-', label='Write', linewidth=2, markersize=6)
+        ax2.plot(mixed_p99, '^-', label='Mixed (9:1)', linewidth=2, markersize=6)
+        ax2.set_title('P99 Latency Trends', fontweight='bold')
+        ax2.set_xlabel('Build Number')
+        ax2.set_ylabel('Latency (ms)')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        ax3 = axes[1, 0]
+        categories = ['Read', 'Write', 'Mixed\n(9:1)']
+        latest_qps = [read_qps[-1], write_qps[-1], mixed_qps[-1]]
+        bars = ax3.bar(categories, latest_qps, color=['#2ecc71', '#e74c3c', '#3498db'])
+        ax3.set_title('Latest QPS Comparison', fontweight='bold')
+        ax3.set_ylabel('QPS')
+        ax3.ticklabel_format(style='plain', axis='y')
+        for bar in bars:
+            height = bar.get_height()
+            ax3.text(bar.get_x() + bar.get_width()/2., height,
+                     f'{int(height):,}', ha='center', va='bottom', fontweight='bold')
+        
+        ax4 = axes[1, 1]
+        latest = history[-1]
+        read_latencies = [
+            latest['read_test']['p50_latency_us'] / 1000,
+            latest['read_test']['p95_latency_us'] / 1000,
+            latest['read_test']['p99_latency_us'] / 1000,
+            latest['read_test']['p999_latency_us'] / 1000
+        ]
+        write_latencies = [
+            latest['write_test']['p50_latency_us'] / 1000,
+            latest['write_test']['p95_latency_us'] / 1000,
+            latest['write_test']['p99_latency_us'] / 1000,
+            latest['write_test']['p999_latency_us'] / 1000
+        ]
+        x = range(4)
+        width = 0.35
+        ax4.bar([i - width/2 for i in x], read_latencies, width, label='Read', color='#2ecc71')
+        ax4.bar([i + width/2 for i in x], write_latencies, width, label='Write', color='#e74c3c')
+        ax4.set_title('Latest Latency Distribution', fontweight='bold')
+        ax4.set_ylabel('Latency (ms)')
+        ax4.set_xticks(x)
+        ax4.set_xticklabels(['P50', 'P95', 'P99', 'P999'])
+        ax4.legend()
+        ax4.grid(True, alpha=0.3, axis='y')
+        
+        plt.tight_layout()
+        plt.savefig('docs/benchmark-chart.png', dpi=150, bbox_inches='tight')
+        print("Chart generated: docs/benchmark-chart.png")
+        
+        badge_data = {
+            "schemaVersion": 1,
+            "label": "QPS",
+            "message": f"Read: {int(read_qps[-1]):,} | Write: {int(write_qps[-1]):,}",
+            "color": "brightgreen"
+        }
+        with open('docs/benchmark-badge.json', 'w') as f:
+            json.dump(badge_data, f)
+        
+        print(f"Latest results:")
+        print(f"  Read QPS: {int(read_qps[-1]):,}")
+        print(f"  Write QPS: {int(write_qps[-1]):,}")
+        print(f"  Mixed QPS: {int(mixed_qps[-1]):,}")
+        PYEOF
     
     - name: Commit and push results
       run: |
