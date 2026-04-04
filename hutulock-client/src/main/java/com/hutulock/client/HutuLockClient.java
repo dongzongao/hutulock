@@ -95,9 +95,58 @@ public class HutuLockClient implements AutoCloseable {
             return t;
         });
 
+    // ==================== 新增：容错组件 ====================
+    
+    /** 连接管理器（自动重连 + 节点健康管理） */
+    private final ConnectionManager connectionManager;
+    
+    /** 重试策略（智能重试 + 指数退避） */
+    private final RetryPolicy retryPolicy;
+    
+    /** 心跳监控器（分级告警 + 提前续期） */
+    private final HeartbeatMonitor heartbeatMonitor;
+
     private HutuLockClient(Builder b) {
         this.config = b.config;
         this.nodes.addAll(b.nodes);
+        
+        // 初始化连接管理器
+        ConnectionManager.Config connConfig = new ConnectionManager.Config();
+        connConfig.connectTimeoutMs = config.connectTimeoutMs;
+        connConfig.maxFrameLength = config.maxFrameLength;
+        this.connectionManager = new ConnectionManager(connConfig, group);
+        
+        for (String[] node : nodes) {
+            String id = node[0] + ":" + node[1];
+            connectionManager.addNode(id, node[0], Integer.parseInt(node[1]));
+        }
+        
+        // 初始化重试策略
+        this.retryPolicy = RetryPolicy.defaults();
+        
+        // 初始化心跳监控器
+        HeartbeatMonitor.Config hbConfig = new HeartbeatMonitor.Config();
+        hbConfig.intervalMs = config.watchdogIntervalMs;
+        hbConfig.sessionTtlMs = config.watchdogTtlMs;
+        this.heartbeatMonitor = new HeartbeatMonitor(hbConfig);
+        
+        // 设置回调
+        connectionManager.setOnConnectionLost(nodeId -> {
+            log.warn("Connection lost to {}, will auto-reconnect", nodeId);
+            heartbeatMonitor.reset();
+        });
+        
+        connectionManager.setOnConnectionRestored(nodeId -> {
+            log.info("Connection restored to {}", nodeId);
+        });
+        
+        heartbeatMonitor.setOnStateChange((oldState, newState) -> {
+            if (newState == HeartbeatMonitor.State.CRITICAL) {
+                log.error("CRITICAL: Heartbeat failures detected! Session may expire soon.");
+            } else if (newState == HeartbeatMonitor.State.WARNING) {
+                log.warn("WARNING: Heartbeat degraded, monitoring closely.");
+            }
+        });
     }
 
     public String getSessionId() { return sessionId; }
@@ -105,14 +154,19 @@ public class HutuLockClient implements AutoCloseable {
     // ==================== 连接与会话 ====================
 
     /**
-     * 连接到集群并建立会话。
+     * 连接到集群并建立会话（使用 ConnectionManager 自动重连）。
      *
      * @throws Exception 所有节点均不可达
      */
     public void connect() throws Exception {
-        connectToAny(new ArrayList<>(nodes));
+        connectionManager.reconnect();
+        this.channel = connectionManager.getConnection();
+        this.handler = connectionManager.getHandler();
         this.sessionId = establishSession(null);
         log.info("Connected, sessionId={}", sessionId);
+        
+        // 启动心跳监控
+        heartbeatMonitor.recordSuccess();
     }
 
     private String establishSession(String existingSessionId) throws Exception {
