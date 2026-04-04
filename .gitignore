@@ -33,3 +33,16 @@ qodana.yaml
 .qodana/
 data/
 hutulock-admin/ui/node_modules/
+
+# Internal documentation (不提交到仓库)
+*_SUMMARY.md
+*_STATUS.md
+*_CHECKLIST.md
+*_ACTION_ITEMS.md
+KEYWORDS.md
+SEO_*.md
+WORK_*.md
+PROJECT_*.md
+COMPLETION_*.md
+.github/INITIAL_ISSUES.md
+.github/TOPICS.md
