@@ -1,1 +1,39 @@
-[]
+[
+  {
+    "timestamp": "2026-04-04T06:53:43.460487231Z",
+    "commit": "75bc5026856d69e0ad3be3a7abd8f86c07968b80",
+    "read_test": {
+      "threads": 100,
+      "duration_ms": 30077,
+      "total_ops": 298637,
+      "failed_ops": 0,
+      "qps": 9929,
+      "p50_latency_us": 0,
+      "p95_latency_us": 0,
+      "p99_latency_us": 0,
+      "p999_latency_us": 1
+    },
+    "write_test": {
+      "threads": 50,
+      "duration_ms": 30002,
+      "total_ops": 0,
+      "failed_ops": 63399463,
+      "qps": 0,
+      "p50_latency_us": 0,
+      "p95_latency_us": 0,
+      "p99_latency_us": 0,
+      "p999_latency_us": 0
+    },
+    "mixed_test": {
+      "threads": 100,
+      "duration_ms": 30064,
+      "total_ops": 298076,
+      "failed_ops": 33332,
+      "qps": 9915,
+      "p50_latency_us": 0,
+      "p95_latency_us": 0,
+      "p99_latency_us": 0,
+      "p999_latency_us": 3
+    }
+  }
+]
