@@ -8,6 +8,7 @@ on:
       - 'hutulock-client/**'
       - 'hutulock-model/**'
       - 'pom.xml'
+      - '.github/workflows/performance-benchmark.yml'
   workflow_dispatch:
   schedule:
     - cron: '0 0 * * 0'  # Weekly on Sunday
