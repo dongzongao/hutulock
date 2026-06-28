@@ -553,5 +553,42 @@
       "p99_latency_us": 2,
       "p999_latency_us": 2
     }
+  },
+  {
+    "timestamp": "2026-06-28T04:27:54.156865884Z",
+    "commit": "2a81dfe4fb28d7cfa696d519b683098dbf859996",
+    "read_test": {
+      "threads": 100,
+      "duration_ms": 30080,
+      "total_ops": 278254,
+      "failed_ops": 0,
+      "qps": 9250,
+      "p50_latency_us": 0,
+      "p95_latency_us": 0,
+      "p99_latency_us": 0,
+      "p999_latency_us": 2
+    },
+    "write_test": {
+      "threads": 50,
+      "duration_ms": 30003,
+      "total_ops": 0,
+      "failed_ops": 60731210,
+      "qps": 0,
+      "p50_latency_us": 0,
+      "p95_latency_us": 0,
+      "p99_latency_us": 0,
+      "p999_latency_us": 0
+    },
+    "mixed_test": {
+      "threads": 100,
+      "duration_ms": 30081,
+      "total_ops": 275848,
+      "failed_ops": 30872,
+      "qps": 9170,
+      "p50_latency_us": 0,
+      "p95_latency_us": 0,
+      "p99_latency_us": 1,
+      "p999_latency_us": 3
+    }
   }
 ]
